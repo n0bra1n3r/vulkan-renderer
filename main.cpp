@@ -2,8 +2,13 @@
 #include <cstdlib>
 #include <memory>
 #include <stdexcept>
+
+#define VK_USE_PLATFORM_WIN32_KHR
 #include <vulkan/vulkan_raii.hpp>
+#define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
 
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
@@ -42,6 +47,8 @@ private:
     vk::raii::PhysicalDevice physicalDevice = nullptr;
     vk::raii::Device device = nullptr;
     vk::raii::Queue graphicsQueue = nullptr;
+    vk::raii::Queue presentQueue = nullptr;
+    vk::raii::SurfaceKHR surface = nullptr;
 
     void initWindow() {
         glfwInit();
@@ -54,6 +61,7 @@ private:
 
     void initVulkan() {
         createInstance();
+        createSurface();
         pickPhysicalDevice();
         createLogicalDevice();
     }
@@ -151,7 +159,8 @@ private:
 	}
 
     void createLogicalDevice() {
-		auto graphicsIndex = findQueueFamilies(*physicalDevice);
+        uint32_t graphicsIndex, presentIndex;
+		std::tie(graphicsIndex, presentIndex) = findQueueFamilies(*physicalDevice);
         auto queuePriority = 0.0f;
 
         vk::DeviceQueueCreateInfo deviceQueueCreateInfo;
@@ -181,9 +190,10 @@ private:
 
         device = vk::raii::Device(physicalDevice, deviceCreateInfo);
         graphicsQueue = vk::raii::Queue(device, graphicsIndex, 0);
+        presentQueue = vk::raii::Queue(device, presentIndex, 0);
     }
 
-    uint32_t findQueueFamilies(VkPhysicalDevice device) {
+    std::tuple<uint32_t, uint32_t> findQueueFamilies(VkPhysicalDevice device) {
         // find the index of the first queue family that supports graphics
         auto queueFamilyProperties = physicalDevice.getQueueFamilyProperties();
 
@@ -194,7 +204,62 @@ private:
                 return qfp.queueFlags & vk::QueueFlagBits::eGraphics;
             });
 
-        return static_cast<uint32_t>(std::distance(queueFamilyProperties.begin(), graphicsQueueFamilyProperty));
+        auto graphicsIndex = static_cast<uint32_t>(std::distance(queueFamilyProperties.begin(), graphicsQueueFamilyProperty));
+
+        // determine a queueFamilyIndex that supports present
+        // first check if the graphicsIndex is good enough
+        auto presentIndex = physicalDevice.getSurfaceSupportKHR(graphicsIndex, *surface)
+            ? graphicsIndex
+            : static_cast<uint32_t>(queueFamilyProperties.size());
+
+        if (presentIndex == queueFamilyProperties.size())
+        {
+            // the graphicsIndex doesn't support present -> look for another family index that supports both
+            // graphics and present
+            for (size_t i = 0; i < queueFamilyProperties.size(); i++)
+            {
+                if ((queueFamilyProperties[i].queueFlags & vk::QueueFlagBits::eGraphics) &&
+                    physicalDevice.getSurfaceSupportKHR(static_cast<uint32_t>(i), *surface))
+                {
+                    graphicsIndex = static_cast<uint32_t>(i);
+                    presentIndex = graphicsIndex;
+                    break;
+                }
+            }
+            if (presentIndex == queueFamilyProperties.size())
+            {
+                // there's nothing like a single family index that supports both graphics and present -> look for another
+                // family index that supports present
+                for (size_t i = 0; i < queueFamilyProperties.size(); i++)
+                {
+                    if (physicalDevice.getSurfaceSupportKHR(static_cast<uint32_t>(i), *surface))
+                    {
+                        presentIndex = static_cast<uint32_t>(i);
+                        break;
+                    }
+                }
+            }
+        }
+
+        if ((graphicsIndex == queueFamilyProperties.size()) || (presentIndex == queueFamilyProperties.size()))
+        {
+            throw std::runtime_error("Could not find a queue for graphics or present -> terminating");
+        }
+
+		return { graphicsIndex, presentIndex };
+    }
+
+    void createSurface() {
+        VkWin32SurfaceCreateInfoKHR createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
+        createInfo.hwnd = glfwGetWin32Window(window);
+        createInfo.hinstance = GetModuleHandle(nullptr);
+
+        VkSurfaceKHR _surface;
+        if (glfwCreateWindowSurface(*instance, window, nullptr, &_surface) != 0) {
+            throw std::runtime_error("failed to create window surface!");
+        }
+        surface = vk::raii::SurfaceKHR(instance, _surface);
     }
 
     void mainLoop() {
