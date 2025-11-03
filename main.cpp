@@ -10,6 +10,8 @@
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
 
+#undef max
+
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
 
@@ -30,6 +32,12 @@ constexpr bool enableValidationLayers = false;
 constexpr bool enableValidationLayers = true;
 #endif
 
+template <typename T>
+constexpr const T& clamp(const T& v, const T& lo, const T& hi)
+{
+    return (v < lo) ? lo : (hi < v) ? hi : v;
+}
+
 class HelloTriangleApplication {
 public:
     void run() {
@@ -46,9 +54,14 @@ private:
 	vk::raii::Instance instance = nullptr;
     vk::raii::PhysicalDevice physicalDevice = nullptr;
     vk::raii::Device device = nullptr;
+    uint32_t graphicsFamily, presentFamily;
     vk::raii::Queue graphicsQueue = nullptr;
     vk::raii::Queue presentQueue = nullptr;
     vk::raii::SurfaceKHR surface = nullptr;
+	vk::SurfaceFormatKHR swapChainSurfaceFormat{};
+	vk::Extent2D swapChainExtent{};
+    vk::raii::SwapchainKHR swapChain = nullptr;
+    std::vector<vk::Image> swapChainImages{};
 
     void initWindow() {
         glfwInit();
@@ -64,6 +77,7 @@ private:
         createSurface();
         pickPhysicalDevice();
         createLogicalDevice();
+		createSwapChain();
     }
 
     void createInstance() {
@@ -159,12 +173,11 @@ private:
 	}
 
     void createLogicalDevice() {
-        uint32_t graphicsIndex, presentIndex;
-		std::tie(graphicsIndex, presentIndex) = findQueueFamilies(*physicalDevice);
+		std::tie(graphicsFamily, presentFamily) = findQueueFamilies(*physicalDevice);
         auto queuePriority = 0.0f;
 
         vk::DeviceQueueCreateInfo deviceQueueCreateInfo;
-        deviceQueueCreateInfo.queueFamilyIndex = graphicsIndex;
+        deviceQueueCreateInfo.queueFamilyIndex = graphicsFamily;
 		deviceQueueCreateInfo.queueCount = 1;
         deviceQueueCreateInfo.pQueuePriorities = &queuePriority;
 
@@ -189,8 +202,8 @@ private:
         deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
         device = vk::raii::Device(physicalDevice, deviceCreateInfo);
-        graphicsQueue = vk::raii::Queue(device, graphicsIndex, 0);
-        presentQueue = vk::raii::Queue(device, presentIndex, 0);
+        graphicsQueue = vk::raii::Queue(device, graphicsFamily, 0);
+        presentQueue = vk::raii::Queue(device, presentFamily, 0);
     }
 
     std::tuple<uint32_t, uint32_t> findQueueFamilies(VkPhysicalDevice device) {
@@ -260,6 +273,89 @@ private:
             throw std::runtime_error("failed to create window surface!");
         }
         surface = vk::raii::SurfaceKHR(instance, _surface);
+    }
+
+    void createSwapChain() {
+        auto surfaceCapabilities = physicalDevice.getSurfaceCapabilitiesKHR(surface);
+        auto availableFormats = physicalDevice.getSurfaceFormatsKHR(surface);
+        auto availablePresentModes = physicalDevice.getSurfacePresentModesKHR(surface);
+
+        swapChainSurfaceFormat = chooseSwapSurfaceFormat(availableFormats);
+        swapChainExtent = chooseSwapExtent(surfaceCapabilities);
+
+        vk::SwapchainCreateInfoKHR swapChainCreateInfo;
+        swapChainCreateInfo.flags = vk::SwapchainCreateFlagsKHR();
+        swapChainCreateInfo.surface = surface;
+        swapChainCreateInfo.minImageCount = chooseSwapMinImageCount(surfaceCapabilities);
+        swapChainCreateInfo.imageFormat = swapChainSurfaceFormat.format;
+        swapChainCreateInfo.imageColorSpace = swapChainSurfaceFormat.colorSpace;
+        swapChainCreateInfo.imageExtent = swapChainExtent;
+        swapChainCreateInfo.imageArrayLayers = 1;
+        swapChainCreateInfo.imageUsage = vk::ImageUsageFlagBits::eColorAttachment;
+        swapChainCreateInfo.imageSharingMode = vk::SharingMode::eExclusive;
+        swapChainCreateInfo.preTransform = surfaceCapabilities.currentTransform;
+        swapChainCreateInfo.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
+        swapChainCreateInfo.presentMode = chooseSwapPresentMode(availablePresentModes);
+        swapChainCreateInfo.clipped = true;
+        swapChainCreateInfo.oldSwapchain = nullptr;
+
+        uint32_t queueFamilyIndices[] = { graphicsFamily, presentFamily };
+
+        if (graphicsFamily != presentFamily) {
+            swapChainCreateInfo.imageSharingMode = vk::SharingMode::eConcurrent;
+            swapChainCreateInfo.queueFamilyIndexCount = 2;
+            swapChainCreateInfo.pQueueFamilyIndices = queueFamilyIndices;
+        }
+        else {
+            swapChainCreateInfo.imageSharingMode = vk::SharingMode::eExclusive;
+            swapChainCreateInfo.queueFamilyIndexCount = 0; // Optional
+            swapChainCreateInfo.pQueueFamilyIndices = nullptr; // Optional
+        }
+
+        swapChain = vk::raii::SwapchainKHR(device, swapChainCreateInfo);
+        swapChainImages = swapChain.getImages();
+	}
+
+    static uint32_t chooseSwapMinImageCount(vk::SurfaceCapabilitiesKHR const& surfaceCapabilities) {
+        auto minImageCount = std::max(3u, surfaceCapabilities.minImageCount);
+        if ((0 < surfaceCapabilities.maxImageCount) && (surfaceCapabilities.maxImageCount < minImageCount)) {
+            minImageCount = surfaceCapabilities.maxImageCount;
+        }
+        return minImageCount;
+    }
+
+    vk::SurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& availableFormats) {
+        for (const auto& availableFormat : availableFormats) {
+            if (availableFormat.format == vk::Format::eB8G8R8A8Srgb && 
+                availableFormat.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear) {
+                return availableFormat;
+            }
+        }
+
+        return availableFormats[0];
+    }
+
+    vk::PresentModeKHR chooseSwapPresentMode(const std::vector<vk::PresentModeKHR>& availablePresentModes) {
+        for (const auto& availablePresentMode : availablePresentModes) {
+            if (availablePresentMode == vk::PresentModeKHR::eMailbox) {
+                return availablePresentMode;
+            }
+        }
+
+        return vk::PresentModeKHR::eFifo;
+    }
+
+    vk::Extent2D chooseSwapExtent(const vk::SurfaceCapabilitiesKHR& capabilities) {
+        if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) {
+            return capabilities.currentExtent;
+        }
+        int width, height;
+        glfwGetFramebufferSize(window, &width, &height);
+
+        return {
+            clamp<uint32_t>(width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width),
+            clamp<uint32_t>(height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height)
+        };
     }
 
     void mainLoop() {
