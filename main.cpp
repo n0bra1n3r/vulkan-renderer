@@ -62,6 +62,7 @@ private:
 	vk::Extent2D swapChainExtent{};
     vk::raii::SwapchainKHR swapChain = nullptr;
     std::vector<vk::Image> swapChainImages{};
+    std::vector<vk::raii::ImageView> swapChainImageViews;
 
     void initWindow() {
         glfwInit();
@@ -78,6 +79,7 @@ private:
         pickPhysicalDevice();
         createLogicalDevice();
 		createSwapChain();
+		createImageViews();
     }
 
     void createInstance() {
@@ -356,6 +358,29 @@ private:
             clamp<uint32_t>(width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width),
             clamp<uint32_t>(height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height)
         };
+    }
+
+    void createImageViews() {
+        swapChainImageViews.clear();
+
+        vk::ImageViewCreateInfo imageViewCreateInfo;
+        imageViewCreateInfo.viewType = vk::ImageViewType::e2D;
+        imageViewCreateInfo.format = swapChainSurfaceFormat.format;
+        imageViewCreateInfo.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
+        imageViewCreateInfo.components.r = vk::ComponentSwizzle::eIdentity;
+        imageViewCreateInfo.components.g = vk::ComponentSwizzle::eIdentity;
+        imageViewCreateInfo.components.b = vk::ComponentSwizzle::eIdentity;
+        imageViewCreateInfo.components.a = vk::ComponentSwizzle::eIdentity;
+        imageViewCreateInfo.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+        imageViewCreateInfo.subresourceRange.baseMipLevel = 0;
+        imageViewCreateInfo.subresourceRange.levelCount = 1;
+        imageViewCreateInfo.subresourceRange.baseArrayLayer = 0;
+        imageViewCreateInfo.subresourceRange.layerCount = 1;
+
+        for (auto image : swapChainImages) {
+            imageViewCreateInfo.image = image;
+            swapChainImageViews.emplace_back(device, imageViewCreateInfo);
+        }
     }
 
     void mainLoop() {
