@@ -12,6 +12,13 @@ const std::vector<char const*> validationLayers = {
     "VK_LAYER_KHRONOS_validation"
 };
 
+const std::vector<const char*> deviceExtensions = {
+    vk::KHRSwapchainExtensionName,
+    vk::KHRSpirv14ExtensionName,
+    vk::KHRSynchronization2ExtensionName,
+    vk::KHRCreateRenderpass2ExtensionName
+};
+
 #ifdef NDEBUG
 constexpr bool enableValidationLayers = false;
 #else
@@ -32,6 +39,7 @@ private:
 
 	vk::raii::Context context{};
 	vk::raii::Instance instance = nullptr;
+    vk::raii::PhysicalDevice physicalDevice = nullptr;
 
     void initWindow() {
         glfwInit();
@@ -44,6 +52,7 @@ private:
 
     void initVulkan() {
         createInstance();
+        pickPhysicalDevice();
     }
 
     void createInstance() {
@@ -102,6 +111,54 @@ private:
         createInfo.ppEnabledExtensionNames = glfwExtensions;
 
         instance = vk::raii::Instance(context, createInfo);
+    }
+
+    void pickPhysicalDevice() {
+        auto devices = instance.enumeratePhysicalDevices();
+        const auto devIter = std::find_if(devices.begin(), devices.end(),
+            [&](auto const& device) 
+            {
+                auto queueFamilies = device.getQueueFamilyProperties();
+                auto isSuitable = device.getProperties().apiVersion >= VK_API_VERSION_1_3;
+                const auto qfpIter = std::find_if(queueFamilies.begin(), queueFamilies.end(),
+                    [](vk::QueueFamilyProperties const& qfp)
+                    {
+                        return (qfp.queueFlags & vk::QueueFlagBits::eGraphics) != static_cast<vk::QueueFlags>(0);
+                    });
+                isSuitable = isSuitable && (qfpIter != queueFamilies.end());
+                auto extensions = device.enumerateDeviceExtensionProperties();
+                auto found = true;
+                for (auto const& extension : deviceExtensions) {
+                    auto extensionIter = std::find_if(extensions.begin(), extensions.end(),
+                        [extension](auto const& ext)
+                        {
+                            return strcmp(ext.extensionName, extension) == 0;
+                        });
+                    found = found && extensionIter != extensions.end();
+                }
+                isSuitable = isSuitable && found;
+                if (isSuitable) {
+                    physicalDevice = device;
+                }
+                return isSuitable;
+            });
+        if (devIter == devices.end()) {
+            throw std::runtime_error("failed to find a suitable GPU!");
+        }
+	}
+
+    uint32_t findQueueFamilies(VkPhysicalDevice device) {
+        // find the index of the first queue family that supports graphics
+        auto queueFamilyProperties = physicalDevice.getQueueFamilyProperties();
+
+        // get the first index into queueFamilyProperties which supports graphics
+        auto graphicsQueueFamilyProperty = std::find_if(queueFamilyProperties.begin(), queueFamilyProperties.end(),
+            [](vk::QueueFamilyProperties const& qfp) 
+            { 
+                return qfp.queueFlags & vk::QueueFlagBits::eGraphics;
+            });
+
+        return static_cast<uint32_t>(std::distance(queueFamilyProperties.begin(), graphicsQueueFamilyProperty));
     }
 
     void mainLoop() {
