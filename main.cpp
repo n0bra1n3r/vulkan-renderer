@@ -40,6 +40,8 @@ private:
 	vk::raii::Context context{};
 	vk::raii::Instance instance = nullptr;
     vk::raii::PhysicalDevice physicalDevice = nullptr;
+    vk::raii::Device device = nullptr;
+    vk::raii::Queue graphicsQueue = nullptr;
 
     void initWindow() {
         glfwInit();
@@ -53,6 +55,7 @@ private:
     void initVulkan() {
         createInstance();
         pickPhysicalDevice();
+        createLogicalDevice();
     }
 
     void createInstance() {
@@ -146,6 +149,39 @@ private:
             throw std::runtime_error("failed to find a suitable GPU!");
         }
 	}
+
+    void createLogicalDevice() {
+		auto graphicsIndex = findQueueFamilies(*physicalDevice);
+        auto queuePriority = 0.0f;
+
+        vk::DeviceQueueCreateInfo deviceQueueCreateInfo;
+        deviceQueueCreateInfo.queueFamilyIndex = graphicsIndex;
+		deviceQueueCreateInfo.queueCount = 1;
+        deviceQueueCreateInfo.pQueuePriorities = &queuePriority;
+
+        vk::PhysicalDeviceFeatures2 features2{}; // vk::PhysicalDeviceFeatures2 (empty for now)
+        vk::PhysicalDeviceVulkan13Features vulkan13Features{};
+        vulkan13Features.dynamicRendering = true; // Enable dynamic rendering from Vulkan 1.3
+        vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT extDynamicStateFeatures{};
+        extDynamicStateFeatures.extendedDynamicState = true; // Enable extended dynamic state from the extension
+
+        // Create a chain of feature structures
+        auto featureChain = vk::StructureChain<
+            vk::PhysicalDeviceFeatures2,
+            vk::PhysicalDeviceVulkan13Features,
+            vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>
+        { features2, vulkan13Features, extDynamicStateFeatures };
+
+        vk::DeviceCreateInfo deviceCreateInfo;
+        deviceCreateInfo.pNext = &featureChain.get<vk::PhysicalDeviceFeatures2>();
+        deviceCreateInfo.queueCreateInfoCount = 1;
+        deviceCreateInfo.pQueueCreateInfos = &deviceQueueCreateInfo;
+        deviceCreateInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
+        deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions.data();
+
+        device = vk::raii::Device(physicalDevice, deviceCreateInfo);
+        graphicsQueue = vk::raii::Queue(device, graphicsIndex, 0);
+    }
 
     uint32_t findQueueFamilies(VkPhysicalDevice device) {
         // find the index of the first queue family that supports graphics
