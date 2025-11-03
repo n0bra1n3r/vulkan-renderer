@@ -20,6 +20,9 @@ public:
 private:
     GLFWwindow* window = nullptr;
 
+	vk::raii::Context context{};
+	vk::raii::Instance instance = nullptr;
+
     void initWindow() {
         glfwInit();
 
@@ -30,7 +33,42 @@ private:
     }
 
     void initVulkan() {
+        createInstance();
+    }
 
+    void createInstance() {
+        vk::ApplicationInfo appInfo;
+        appInfo.pApplicationName = "Hello Triangle";
+        appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
+        appInfo.pEngineName = "Vulkan Renderer";
+        appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
+        appInfo.apiVersion = vk::ApiVersion14;
+
+        // Get the required instance extensions from GLFW.
+        uint32_t glfwExtensionCount = 0;
+        auto glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+
+        // Check if the required GLFW extensions are supported by the Vulkan implementation.
+        auto extensionProperties = context.enumerateInstanceExtensionProperties();
+        for (uint32_t i = 0; i < glfwExtensionCount; ++i)
+        {
+            auto glfwExtension = glfwExtensions[i];
+            if (std::none_of(extensionProperties.begin(), extensionProperties.end(),
+                [glfwExtension](auto const& extensionProperty)
+                {
+                    return std::strcmp(extensionProperty.extensionName, glfwExtension) == 0;
+                }))
+            {
+                throw std::runtime_error(std::string("Required GLFW extension not supported: ") + glfwExtension);
+            }
+        }
+
+		vk::InstanceCreateInfo createInfo;
+		createInfo.pApplicationInfo = &appInfo;
+        createInfo.enabledExtensionCount = glfwExtensionCount;
+        createInfo.ppEnabledExtensionNames = glfwExtensions;
+
+        instance = vk::raii::Instance(context, createInfo);
     }
 
     void mainLoop() {
