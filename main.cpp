@@ -27,7 +27,7 @@ const std::vector<const char*> deviceExtensions = {
 };
 
 #ifdef NDEBUG
-constexpr bool enableValidationLayers = false;
+constexpr bool enableValidationLayers = true;
 #else
 constexpr bool enableValidationLayers = true;
 #endif
@@ -54,7 +54,7 @@ private:
 	vk::raii::Instance instance = nullptr;
     vk::raii::PhysicalDevice physicalDevice = nullptr;
     vk::raii::Device device = nullptr;
-    uint32_t graphicsFamily, presentFamily;
+    uint32_t graphicsFamily = 0, presentFamily = 0;
     vk::raii::Queue graphicsQueue = nullptr;
     vk::raii::Queue presentQueue = nullptr;
     vk::raii::SurfaceKHR surface = nullptr;
@@ -62,7 +62,7 @@ private:
 	vk::Extent2D swapChainExtent{};
     vk::raii::SwapchainKHR swapChain = nullptr;
     std::vector<vk::Image> swapChainImages{};
-    std::vector<vk::raii::ImageView> swapChainImageViews;
+    std::vector<vk::raii::ImageView> swapChainImageViews{};
 
     void initWindow() {
         glfwInit();
@@ -83,7 +83,7 @@ private:
     }
 
     void createInstance() {
-        vk::ApplicationInfo appInfo;
+        vk::ApplicationInfo appInfo{};
         appInfo.pApplicationName = "Hello Triangle";
         appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
         appInfo.pEngineName = "Vulkan Renderer";
@@ -91,7 +91,7 @@ private:
         appInfo.apiVersion = vk::ApiVersion14;
 
         // Get the required layers
-        std::vector<char const*> requiredLayers;
+        std::vector<char const*> requiredLayers{};
         if (enableValidationLayers) {
             requiredLayers.assign(validationLayers.begin(), validationLayers.end());
         }
@@ -130,7 +130,7 @@ private:
             }
         }
 
-		vk::InstanceCreateInfo createInfo;
+        vk::InstanceCreateInfo createInfo{};
 		createInfo.pApplicationInfo = &appInfo;
 		createInfo.enabledLayerCount = static_cast<uint32_t>(requiredLayers.size());
 		createInfo.ppEnabledLayerNames = requiredLayers.data();
@@ -178,7 +178,7 @@ private:
 		std::tie(graphicsFamily, presentFamily) = findQueueFamilies(*physicalDevice);
         auto queuePriority = 0.0f;
 
-        vk::DeviceQueueCreateInfo deviceQueueCreateInfo;
+        vk::DeviceQueueCreateInfo deviceQueueCreateInfo{};
         deviceQueueCreateInfo.queueFamilyIndex = graphicsFamily;
 		deviceQueueCreateInfo.queueCount = 1;
         deviceQueueCreateInfo.pQueuePriorities = &queuePriority;
@@ -196,7 +196,7 @@ private:
             vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>
         { features2, vulkan13Features, extDynamicStateFeatures };
 
-        vk::DeviceCreateInfo deviceCreateInfo;
+        vk::DeviceCreateInfo deviceCreateInfo{};
         deviceCreateInfo.pNext = &featureChain.get<vk::PhysicalDeviceFeatures2>();
         deviceCreateInfo.queueCreateInfoCount = 1;
         deviceCreateInfo.pQueueCreateInfos = &deviceQueueCreateInfo;
@@ -285,21 +285,19 @@ private:
         swapChainSurfaceFormat = chooseSwapSurfaceFormat(availableFormats);
         swapChainExtent = chooseSwapExtent(surfaceCapabilities);
 
-        vk::SwapchainCreateInfoKHR swapChainCreateInfo;
+        vk::SwapchainCreateInfoKHR swapChainCreateInfo{};
         swapChainCreateInfo.flags = vk::SwapchainCreateFlagsKHR();
         swapChainCreateInfo.surface = surface;
         swapChainCreateInfo.minImageCount = chooseSwapMinImageCount(surfaceCapabilities);
         swapChainCreateInfo.imageFormat = swapChainSurfaceFormat.format;
         swapChainCreateInfo.imageColorSpace = swapChainSurfaceFormat.colorSpace;
         swapChainCreateInfo.imageExtent = swapChainExtent;
-        swapChainCreateInfo.imageArrayLayers = 1;
-        swapChainCreateInfo.imageUsage = vk::ImageUsageFlagBits::eColorAttachment;
-        swapChainCreateInfo.imageSharingMode = vk::SharingMode::eExclusive;
-        swapChainCreateInfo.preTransform = surfaceCapabilities.currentTransform;
-        swapChainCreateInfo.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
+        swapChainCreateInfo.imageArrayLayers = 1; // keep 1 unless rendering for VR
+        swapChainCreateInfo.imageUsage = vk::ImageUsageFlagBits::eColorAttachment; // we are rendering to image directly
+        swapChainCreateInfo.preTransform = surfaceCapabilities.currentTransform;  // don't apply further transformation
+        swapChainCreateInfo.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque; // don’t blend with other windows in the system
         swapChainCreateInfo.presentMode = chooseSwapPresentMode(availablePresentModes);
-        swapChainCreateInfo.clipped = true;
-        swapChainCreateInfo.oldSwapchain = nullptr;
+        swapChainCreateInfo.clipped = true;  // don’t update the pixels that are obscured
 
         uint32_t queueFamilyIndices[] = { graphicsFamily, presentFamily };
 
@@ -310,16 +308,14 @@ private:
         }
         else {
             swapChainCreateInfo.imageSharingMode = vk::SharingMode::eExclusive;
-            swapChainCreateInfo.queueFamilyIndexCount = 0; // Optional
-            swapChainCreateInfo.pQueueFamilyIndices = nullptr; // Optional
         }
 
         swapChain = vk::raii::SwapchainKHR(device, swapChainCreateInfo);
         swapChainImages = swapChain.getImages();
 	}
 
-    static uint32_t chooseSwapMinImageCount(vk::SurfaceCapabilitiesKHR const& surfaceCapabilities) {
-        auto minImageCount = std::max(3u, surfaceCapabilities.minImageCount);
+    uint32_t chooseSwapMinImageCount(vk::SurfaceCapabilitiesKHR const& surfaceCapabilities) {
+        auto minImageCount = surfaceCapabilities.minImageCount + 1;
         if ((0 < surfaceCapabilities.maxImageCount) && (surfaceCapabilities.maxImageCount < minImageCount)) {
             minImageCount = surfaceCapabilities.maxImageCount;
         }
@@ -361,9 +357,7 @@ private:
     }
 
     void createImageViews() {
-        swapChainImageViews.clear();
-
-        vk::ImageViewCreateInfo imageViewCreateInfo;
+        vk::ImageViewCreateInfo imageViewCreateInfo{};
         imageViewCreateInfo.viewType = vk::ImageViewType::e2D;
         imageViewCreateInfo.format = swapChainSurfaceFormat.format;
         imageViewCreateInfo.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
@@ -372,9 +366,7 @@ private:
         imageViewCreateInfo.components.b = vk::ComponentSwizzle::eIdentity;
         imageViewCreateInfo.components.a = vk::ComponentSwizzle::eIdentity;
         imageViewCreateInfo.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
-        imageViewCreateInfo.subresourceRange.baseMipLevel = 0;
         imageViewCreateInfo.subresourceRange.levelCount = 1;
-        imageViewCreateInfo.subresourceRange.baseArrayLayer = 0;
         imageViewCreateInfo.subresourceRange.layerCount = 1;
 
         for (auto image : swapChainImages) {
