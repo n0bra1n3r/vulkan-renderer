@@ -1,4 +1,4 @@
-#include <iostream>
+ï»¿#include <iostream>
 #include <cstdlib>
 #include <memory>
 #include <stdexcept>
@@ -50,16 +50,16 @@ public:
 private:
     GLFWwindow* window = nullptr;
 
-	vk::raii::Context context{};
-	vk::raii::Instance instance = nullptr;
+    vk::raii::Context context{};
+    vk::raii::Instance instance = nullptr;
     vk::raii::PhysicalDevice physicalDevice = nullptr;
     vk::raii::Device device = nullptr;
     uint32_t graphicsFamily = 0, presentFamily = 0;
     vk::raii::Queue graphicsQueue = nullptr;
     vk::raii::Queue presentQueue = nullptr;
     vk::raii::SurfaceKHR surface = nullptr;
-	vk::SurfaceFormatKHR swapChainSurfaceFormat{};
-	vk::Extent2D swapChainExtent{};
+    vk::SurfaceFormatKHR swapChainSurfaceFormat{};
+    vk::Extent2D swapChainExtent{};
     vk::raii::SwapchainKHR swapChain = nullptr;
     std::vector<vk::Image> swapChainImages{};
     std::vector<vk::raii::ImageView> swapChainImageViews{};
@@ -78,8 +78,8 @@ private:
         createSurface();
         pickPhysicalDevice();
         createLogicalDevice();
-		createSwapChain();
-		createImageViews();
+        createSwapChain();
+        createImageViews();
     }
 
     void createInstance() {
@@ -98,15 +98,15 @@ private:
 
         // Check if the required layers are supported by the Vulkan implementation.
         auto layerProperties = context.enumerateInstanceLayerProperties();
-        if (std::any_of(requiredLayers.begin(), requiredLayers.end(), 
-            [&layerProperties](auto const& requiredLayer) 
+        if (std::any_of(requiredLayers.begin(), requiredLayers.end(),
+            [&layerProperties](auto const& requiredLayer)
             {
                 return std::none_of(layerProperties.begin(), layerProperties.end(),
                     [requiredLayer](auto const& layerProperty)
                     {
                         return strcmp(layerProperty.layerName, requiredLayer) == 0;
                     });
-                }))
+            }))
         {
             throw std::runtime_error("One or more required layers are not supported!");
         }
@@ -131,9 +131,9 @@ private:
         }
 
         vk::InstanceCreateInfo createInfo{};
-		createInfo.pApplicationInfo = &appInfo;
-		createInfo.enabledLayerCount = static_cast<uint32_t>(requiredLayers.size());
-		createInfo.ppEnabledLayerNames = requiredLayers.data();
+        createInfo.pApplicationInfo = &appInfo;
+        createInfo.enabledLayerCount = static_cast<uint32_t>(requiredLayers.size());
+        createInfo.ppEnabledLayerNames = requiredLayers.data();
         createInfo.enabledExtensionCount = glfwExtensionCount;
         createInfo.ppEnabledExtensionNames = glfwExtensions;
 
@@ -143,7 +143,7 @@ private:
     void pickPhysicalDevice() {
         auto devices = instance.enumeratePhysicalDevices();
         const auto devIter = std::find_if(devices.begin(), devices.end(),
-            [&](auto const& device) 
+            [&](auto const& device)
             {
                 auto queueFamilies = device.getQueueFamilyProperties();
                 auto isSuitable = device.getProperties().apiVersion >= VK_API_VERSION_1_3;
@@ -172,15 +172,15 @@ private:
         if (devIter == devices.end()) {
             throw std::runtime_error("failed to find a suitable GPU!");
         }
-	}
+    }
 
     void createLogicalDevice() {
-		std::tie(graphicsFamily, presentFamily) = findQueueFamilies(*physicalDevice);
+        std::tie(graphicsFamily, presentFamily) = findQueueFamilies(*physicalDevice);
         auto queuePriority = 0.0f;
 
         vk::DeviceQueueCreateInfo deviceQueueCreateInfo{};
         deviceQueueCreateInfo.queueFamilyIndex = graphicsFamily;
-		deviceQueueCreateInfo.queueCount = 1;
+        deviceQueueCreateInfo.queueCount = 1;
         deviceQueueCreateInfo.pQueuePriorities = &queuePriority;
 
         vk::PhysicalDeviceFeatures2 features2{}; // vk::PhysicalDeviceFeatures2 (empty for now)
@@ -214,8 +214,8 @@ private:
 
         // get the first index into queueFamilyProperties which supports graphics
         auto graphicsQueueFamilyProperty = std::find_if(queueFamilyProperties.begin(), queueFamilyProperties.end(),
-            [](vk::QueueFamilyProperties const& qfp) 
-            { 
+            [](vk::QueueFamilyProperties const& qfp)
+            {
                 return qfp.queueFlags & vk::QueueFlagBits::eGraphics;
             });
 
@@ -261,7 +261,7 @@ private:
             throw std::runtime_error("Could not find a queue for graphics or present -> terminating");
         }
 
-		return { graphicsIndex, presentIndex };
+        return { graphicsIndex, presentIndex };
     }
 
     void createSurface() {
@@ -295,9 +295,9 @@ private:
         swapChainCreateInfo.imageArrayLayers = 1; // keep 1 unless rendering for VR
         swapChainCreateInfo.imageUsage = vk::ImageUsageFlagBits::eColorAttachment; // we are rendering to image directly
         swapChainCreateInfo.preTransform = surfaceCapabilities.currentTransform;  // don't apply further transformation
-        swapChainCreateInfo.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque; // don’t blend with other windows in the system
+        swapChainCreateInfo.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque; // donï¿½t blend with other windows in the system
         swapChainCreateInfo.presentMode = chooseSwapPresentMode(availablePresentModes);
-        swapChainCreateInfo.clipped = true;  // don’t update the pixels that are obscured
+        swapChainCreateInfo.clipped = true;  // donï¿½t update the pixels that are obscured
 
         uint32_t queueFamilyIndices[] = { graphicsFamily, presentFamily };
 
@@ -312,7 +312,7 @@ private:
 
         swapChain = vk::raii::SwapchainKHR(device, swapChainCreateInfo);
         swapChainImages = swapChain.getImages();
-	}
+    }
 
     uint32_t chooseSwapMinImageCount(vk::SurfaceCapabilitiesKHR const& surfaceCapabilities) {
         auto minImageCount = surfaceCapabilities.minImageCount + 1;
@@ -324,7 +324,7 @@ private:
 
     vk::SurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& availableFormats) {
         for (const auto& availableFormat : availableFormats) {
-            if (availableFormat.format == vk::Format::eB8G8R8A8Srgb && 
+            if (availableFormat.format == vk::Format::eB8G8R8A8Srgb &&
                 availableFormat.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear) {
                 return availableFormat;
             }
@@ -394,7 +394,6 @@ int main() {
         app.run();
     }
     catch (const std::exception& e) {
-        std::cerr << e.what() << std::endl;
         return EXIT_FAILURE;
     }
 
