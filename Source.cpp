@@ -68,6 +68,9 @@ private:
     vk::raii::Pipeline graphicsPipeline = nullptr;
 	vk::raii::CommandPool commandPool = nullptr;
     vk::raii::CommandBuffer commandBuffer = nullptr;
+    vk::raii::Semaphore presentCompleteSemaphore = nullptr;
+    vk::raii::Semaphore renderFinishedSemaphore = nullptr;
+    vk::raii::Fence drawFence = nullptr;
 
     void initWindow() {
         glfwInit();
@@ -87,6 +90,7 @@ private:
         createImageViews();
 		createGraphicsPipeline();
         createCommandPool();
+        createSyncObjects();
     }
 
     void createInstance() {
@@ -193,6 +197,7 @@ private:
         vk::PhysicalDeviceFeatures2 features2{}; // vk::PhysicalDeviceFeatures2 (empty for now)
         vk::PhysicalDeviceVulkan13Features vulkan13Features{};
         vulkan13Features.dynamicRendering = true; // Enable dynamic rendering from Vulkan 1.3
+        vulkan13Features.synchronization2 = true; // enable synchronization2 from the extension
         vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT extDynamicStateFeatures{};
         extDynamicStateFeatures.extendedDynamicState = true; // Enable extended dynamic state from the extension
 
@@ -596,10 +601,50 @@ private:
         commandBuffer.end();
 	}
 
+    void createSyncObjects() {
+        presentCompleteSemaphore = vk::raii::Semaphore(device, vk::SemaphoreCreateInfo());
+        renderFinishedSemaphore = vk::raii::Semaphore(device, vk::SemaphoreCreateInfo());
+        drawFence = vk::raii::Fence(device, vk::FenceCreateInfo(vk::FenceCreateFlagBits::eSignaled));
+	}
+
+    void drawFrame() {
+        auto fenceResult = device.waitForFences(*drawFence, vk::True, UINT64_MAX);
+        auto resAndImageIndex = swapChain.acquireNextImage(UINT64_MAX, *presentCompleteSemaphore, nullptr);
+
+        recordCommandBuffer(resAndImageIndex.second);
+
+        device.resetFences(*drawFence);
+
+        vk::PipelineStageFlags waitDestinationStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput);
+
+        vk::SubmitInfo submitInfo{};
+        submitInfo.waitSemaphoreCount = 1;
+        submitInfo.pWaitSemaphores = &*presentCompleteSemaphore;
+        submitInfo.pWaitDstStageMask = &waitDestinationStageMask;
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &*commandBuffer;
+        submitInfo.signalSemaphoreCount = 1;
+        submitInfo.pSignalSemaphores = &*renderFinishedSemaphore;
+
+        graphicsQueue.submit(submitInfo, *drawFence);
+
+        vk::PresentInfoKHR presentInfoKHR{};
+        presentInfoKHR.waitSemaphoreCount = 1;
+        presentInfoKHR.pWaitSemaphores = &*renderFinishedSemaphore;
+        presentInfoKHR.swapchainCount = 1;
+        presentInfoKHR.pSwapchains = &*swapChain;
+        presentInfoKHR.pImageIndices = &resAndImageIndex.second;
+
+        presentQueue.presentKHR(presentInfoKHR);
+    }
+
     void mainLoop() {
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
+            drawFrame();
         }
+
+        device.waitIdle();
     }
 
     void cleanup() {
