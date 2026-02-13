@@ -11,6 +11,8 @@
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
 
+#include "RenderGraph.hpp"
+
 #undef max
 
 const uint32_t WIDTH = 800;
@@ -67,10 +69,15 @@ private:
     vk::raii::PipelineLayout pipelineLayout = nullptr;
     vk::raii::Pipeline graphicsPipeline = nullptr;
 	vk::raii::CommandPool commandPool = nullptr;
-    vk::raii::CommandBuffer commandBuffer = nullptr;
-    vk::raii::Semaphore presentCompleteSemaphore = nullptr;
-    vk::raii::Semaphore renderFinishedSemaphore = nullptr;
-    vk::raii::Fence drawFence = nullptr;
+
+    // Removed old single command buffer and sync objects:
+    // vk::raii::CommandBuffer commandBuffer = nullptr;
+    // vk::raii::Semaphore presentCompleteSemaphore = nullptr;
+    // vk::raii::Semaphore renderFinishedSemaphore = nullptr;
+    // vk::raii::Fence drawFence = nullptr;
+
+    // New: render graph that encapsulates per-frame sync, command buffers and simple pass graph
+    std::unique_ptr<RenderGraph> renderGraph;
 
     void initWindow() {
         glfwInit();
@@ -90,7 +97,9 @@ private:
         createImageViews();
 		createGraphicsPipeline();
         createCommandPool();
-        createSyncObjects();
+
+        // create and initialize the render graph (allocates per-image command-buffers and sync)
+        initRenderGraph();
     }
 
     void createInstance() {
@@ -506,136 +515,82 @@ private:
 
         commandPool = vk::raii::CommandPool(device, poolInfo);
 
-		vk::CommandBufferAllocateInfo allocInfo{};
-        allocInfo.commandPool = commandPool;
-        allocInfo.level = vk::CommandBufferLevel::ePrimary;
-        allocInfo.commandBufferCount = 1;
-
-        commandBuffer = std::move(vk::raii::CommandBuffers(device, allocInfo).front());
+		// keep old single-command allocation removed: render graph will allocate per-image command buffers
 	}
 
-    void transitionImageLayout(
-            uint32_t imageIndex,
-            vk::ImageLayout oldLayout,
-            vk::ImageLayout newLayout,
-            vk::AccessFlags2 srcAccessMask,
-            vk::AccessFlags2 dstAccessMask,
-            vk::PipelineStageFlags2 srcStageMask,
-            vk::PipelineStageFlags2 dstStageMask) {
-        vk::ImageMemoryBarrier2 barrier{};
-        barrier.srcStageMask = srcStageMask;
-        barrier.srcAccessMask = srcAccessMask;
-        barrier.dstStageMask = dstStageMask;
-        barrier.dstAccessMask = dstAccessMask;
-        barrier.oldLayout = oldLayout;
-        barrier.newLayout = newLayout;
-        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.image = swapChainImages[imageIndex];
-        barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
-        barrier.subresourceRange.baseMipLevel = 0;
-        barrier.subresourceRange.levelCount = 1;
-        barrier.subresourceRange.baseArrayLayer = 0;
-        barrier.subresourceRange.layerCount = 1;
+    // New: create and initialize the RenderGraph and add the passes used by the app
+    void initRenderGraph()
+    {
+        // construct the render graph (holds references, does NOT copy objects)
+        renderGraph.reset(new RenderGraph(device, swapChain, graphicsQueue, presentQueue, commandPool, swapChainImageViews, swapChainExtent));
 
-        vk::DependencyInfo dependencyInfo{};
-        dependencyInfo.dependencyFlags = {};
-        dependencyInfo.imageMemoryBarrierCount = 1;
-        dependencyInfo.pImageMemoryBarriers = &barrier;
+        // Main rendering pass: transition Undefined -> ColorAttachmentOptimal and record in the pass
+        RenderPassNode mainPass{};
+        mainPass.name = "MainPass";
+        mainPass.oldLayout = vk::ImageLayout::eUndefined;
+        mainPass.newLayout = vk::ImageLayout::eColorAttachmentOptimal;
+        mainPass.srcAccessMask = {}; // from undefined
+        mainPass.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
+        mainPass.srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe;
+        mainPass.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
 
-        commandBuffer.pipelineBarrier2(dependencyInfo);
+        // record the same rendering commands previously inside recordCommandBuffer (beginRendering, bind pipeline, draw, endRendering)
+        mainPass.recordFunc = [this](vk::raii::CommandBuffer& cmd, uint32_t imageIndex)
+        {
+            vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
+            vk::RenderingAttachmentInfo attachmentInfo{};
+            attachmentInfo.imageView = swapChainImageViews[imageIndex];
+            attachmentInfo.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
+            attachmentInfo.loadOp = vk::AttachmentLoadOp::eClear;
+            attachmentInfo.storeOp = vk::AttachmentStoreOp::eStore;
+            attachmentInfo.clearValue = clearColor;
+
+            vk::RenderingInfo renderingInfo{};
+            renderingInfo.renderArea.offset.x = 0;
+            renderingInfo.renderArea.offset.y = 0;
+            renderingInfo.renderArea.extent = swapChainExtent;
+            renderingInfo.layerCount = 1;
+            renderingInfo.colorAttachmentCount = 1;
+            renderingInfo.pColorAttachments = &attachmentInfo;
+
+            cmd.beginRendering(renderingInfo);
+
+            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline);
+
+            cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
+            cmd.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
+
+            cmd.draw(3, 1, 0, 0);
+
+            cmd.endRendering();
+        };
+
+        renderGraph->addPass(mainPass);
+
+        // Final transition pass: move from color attachment -> present.
+        RenderPassNode presentTransition{};
+        presentTransition.name = "PresentTransition";
+        presentTransition.oldLayout = vk::ImageLayout::eColorAttachmentOptimal;
+        presentTransition.newLayout = vk::ImageLayout::ePresentSrcKHR;
+        presentTransition.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
+        presentTransition.dstAccessMask = {};
+        presentTransition.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+        presentTransition.dstStageMask = vk::PipelineStageFlagBits2::eBottomOfPipe;
+        presentTransition.recordFunc = nullptr; // no recording, just a layout transition
+
+        renderGraph->addPass(presentTransition);
+
+        // finally initialize (allocates per-image command buffers and per-frame sync objects)
+        renderGraph->init();
     }
 
-    void recordCommandBuffer(uint32_t imageIndex) {
-        commandBuffer.begin({});
+    // removed transitionImageLayout and recordCommandBuffer methods - RenderGraph now handles transitions + per-pass recording
 
-        // Before starting rendering, transition the swapchain image to COLOR_ATTACHMENT_OPTIMAL
-        transitionImageLayout(
-            imageIndex,
-            vk::ImageLayout::eUndefined,
-            vk::ImageLayout::eColorAttachmentOptimal,
-            {},                                                 // srcAccessMask (no need to wait for previous operations)
-            vk::AccessFlagBits2::eColorAttachmentWrite,
-            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-            vk::PipelineStageFlagBits2::eColorAttachmentOutput
-        );
-
-        vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
-        vk::RenderingAttachmentInfo attachmentInfo{};
-        attachmentInfo.imageView = swapChainImageViews[imageIndex];
-        attachmentInfo.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
-        attachmentInfo.loadOp = vk::AttachmentLoadOp::eClear;
-        attachmentInfo.storeOp = vk::AttachmentStoreOp::eStore;
-        attachmentInfo.clearValue = clearColor;
-
-        vk::RenderingInfo renderingInfo{};
-        renderingInfo.renderArea.offset.x = 0;
-        renderingInfo.renderArea.offset.y = 0;
-        renderingInfo.renderArea.extent = swapChainExtent;
-        renderingInfo.layerCount = 1;
-        renderingInfo.colorAttachmentCount = 1;
-        renderingInfo.pColorAttachments = &attachmentInfo;
-
-        commandBuffer.beginRendering(renderingInfo);
-
-        commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline);
-
-        commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
-        commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
-
-        commandBuffer.draw(3, 1, 0, 0);
-
-        commandBuffer.endRendering();
-
-        // After rendering, transition the swapchain image to PRESENT_SRC
-        transitionImageLayout(
-            imageIndex,
-            vk::ImageLayout::eColorAttachmentOptimal,
-            vk::ImageLayout::ePresentSrcKHR,
-            vk::AccessFlagBits2::eColorAttachmentWrite,
-            {},
-            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-            vk::PipelineStageFlagBits2::eBottomOfPipe
-        );
-
-        commandBuffer.end();
-	}
-
-    void createSyncObjects() {
-        presentCompleteSemaphore = vk::raii::Semaphore(device, vk::SemaphoreCreateInfo());
-        renderFinishedSemaphore = vk::raii::Semaphore(device, vk::SemaphoreCreateInfo());
-        drawFence = vk::raii::Fence(device, vk::FenceCreateInfo(vk::FenceCreateFlagBits::eSignaled));
-	}
+    // removed createSyncObjects - RenderGraph manages per-frame sync
 
     void drawFrame() {
-        auto fenceResult = device.waitForFences(*drawFence, vk::True, UINT64_MAX);
-        auto resAndImageIndex = swapChain.acquireNextImage(UINT64_MAX, *presentCompleteSemaphore, nullptr);
-
-        recordCommandBuffer(resAndImageIndex.second);
-
-        device.resetFences(*drawFence);
-
-        vk::PipelineStageFlags waitDestinationStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput);
-
-        vk::SubmitInfo submitInfo{};
-        submitInfo.waitSemaphoreCount = 1;
-        submitInfo.pWaitSemaphores = &*presentCompleteSemaphore;
-        submitInfo.pWaitDstStageMask = &waitDestinationStageMask;
-        submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = &*commandBuffer;
-        submitInfo.signalSemaphoreCount = 1;
-        submitInfo.pSignalSemaphores = &*renderFinishedSemaphore;
-
-        graphicsQueue.submit(submitInfo, *drawFence);
-
-        vk::PresentInfoKHR presentInfoKHR{};
-        presentInfoKHR.waitSemaphoreCount = 1;
-        presentInfoKHR.pWaitSemaphores = &*renderFinishedSemaphore;
-        presentInfoKHR.swapchainCount = 1;
-        presentInfoKHR.pSwapchains = &*swapChain;
-        presentInfoKHR.pImageIndices = &resAndImageIndex.second;
-
-        presentQueue.presentKHR(presentInfoKHR);
+        // delegate frame orchestration to the render graph
+        renderGraph->executeFrame();
     }
 
     void mainLoop() {
