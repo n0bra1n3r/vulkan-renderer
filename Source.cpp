@@ -459,21 +459,14 @@ private:
         viewportState.scissorCount = 1;
 
         vk::PipelineRasterizationStateCreateInfo rasterizer{};
-        rasterizer.depthClampEnable = vk::False;
-        rasterizer.rasterizerDiscardEnable = vk::False;
-        rasterizer.polygonMode = vk::PolygonMode::eFill;
         rasterizer.cullMode = vk::CullModeFlagBits::eBack;
         rasterizer.frontFace = vk::FrontFace::eClockwise;
-        rasterizer.depthBiasEnable = vk::False;
-        rasterizer.depthBiasSlopeFactor = 1.0f;
         rasterizer.lineWidth = 1.0f;
 
         vk::PipelineMultisampleStateCreateInfo multisampling{};
         multisampling.rasterizationSamples = vk::SampleCountFlagBits::e1;
-        multisampling.sampleShadingEnable = vk::False;
 
         vk::PipelineColorBlendAttachmentState colorBlendAttachment{};
-        colorBlendAttachment.blendEnable = vk::False;
         colorBlendAttachment.colorWriteMask =
             vk::ColorComponentFlagBits::eR | 
             vk::ColorComponentFlagBits::eG | 
@@ -481,14 +474,10 @@ private:
             vk::ColorComponentFlagBits::eA;
 
         vk::PipelineColorBlendStateCreateInfo colorBlending{};
-        colorBlending.logicOpEnable = vk::False;
-        colorBlending.logicOp = vk::LogicOp::eCopy;
         colorBlending.attachmentCount = 1;
         colorBlending.pAttachments = &colorBlendAttachment;
 
         vk::PipelineLayoutCreateInfo pipelineLayoutInfo{};
-        pipelineLayoutInfo.setLayoutCount = 0;
-        pipelineLayoutInfo.pushConstantRangeCount = 0;
 
         pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
 
