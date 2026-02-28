@@ -316,7 +316,6 @@ private:
         swapChainCreateInfo.imageArrayLayers = 1; // keep 1 unless rendering for VR
         swapChainCreateInfo.imageUsage = vk::ImageUsageFlagBits::eColorAttachment; // we are rendering to image directly
         swapChainCreateInfo.preTransform = surfaceCapabilities.currentTransform;  // don't apply further transformation
-        swapChainCreateInfo.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque; // don�t blend with other windows in the system
         swapChainCreateInfo.presentMode = chooseSwapPresentMode(availablePresentModes);
         swapChainCreateInfo.clipped = true;  // don�t update the pixels that are obscured
 
@@ -326,9 +325,6 @@ private:
             swapChainCreateInfo.imageSharingMode = vk::SharingMode::eConcurrent;
             swapChainCreateInfo.queueFamilyIndexCount = 2;
             swapChainCreateInfo.pQueueFamilyIndices = queueFamilyIndices;
-        }
-        else {
-            swapChainCreateInfo.imageSharingMode = vk::SharingMode::eExclusive;
         }
 
         swapChain = vk::raii::SwapchainKHR(device, swapChainCreateInfo);
@@ -382,10 +378,6 @@ private:
         imageViewCreateInfo.viewType = vk::ImageViewType::e2D;
         imageViewCreateInfo.format = swapChainSurfaceFormat.format;
         imageViewCreateInfo.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
-        imageViewCreateInfo.components.r = vk::ComponentSwizzle::eIdentity;
-        imageViewCreateInfo.components.g = vk::ComponentSwizzle::eIdentity;
-        imageViewCreateInfo.components.b = vk::ComponentSwizzle::eIdentity;
-        imageViewCreateInfo.components.a = vk::ComponentSwizzle::eIdentity;
         imageViewCreateInfo.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
         imageViewCreateInfo.subresourceRange.levelCount = 1;
         imageViewCreateInfo.subresourceRange.layerCount = 1;

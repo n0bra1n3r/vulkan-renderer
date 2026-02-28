@@ -153,9 +153,7 @@ public:
                 barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
                 barrier.image = m_swapchainImages[imageIndex];
                 barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
-                barrier.subresourceRange.baseMipLevel = 0;
                 barrier.subresourceRange.levelCount = 1;
-                barrier.subresourceRange.baseArrayLayer = 0;
                 barrier.subresourceRange.layerCount = 1;
 
                 vk::DependencyInfo dependencyInfo{};
