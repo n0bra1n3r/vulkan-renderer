@@ -73,6 +73,14 @@ const std::vector<uint32_t> indices =
     0, 1, 2, 2, 3, 0
 };
 
+const vk::DrawIndexedIndirectCommand drawCmd = {
+    static_cast<uint32_t>(indices.size()), // indexCount
+    1, // instanceCount
+    0, // firstIndex
+    0, // vertexOffset
+    0  // firstInstance
+};
+
 class HelloTriangleApplication {
 public:
     void run() {
@@ -105,6 +113,8 @@ private:
     vk::raii::DeviceMemory vertexBufferMemory = nullptr;
     vk::raii::Buffer indexBuffer = nullptr;
     vk::raii::DeviceMemory indexBufferMemory = nullptr;
+    vk::raii::Buffer indirectBuffer = nullptr;
+    vk::raii::DeviceMemory indirectBufferMemory = nullptr;
 
     // Removed old single command buffer and sync objects:
     // vk::raii::CommandBuffer commandBuffer = nullptr;
@@ -134,6 +144,7 @@ private:
 		createGraphicsPipeline();
 		createVertexBuffer();
         createIndexBuffer();
+        createIndirectBuffer();
         createCommandPool();
 
         // create and initialize the render graph (allocates per-image command-buffers and sync)
@@ -596,6 +607,31 @@ private:
         indexBufferMemory.unmapMemory();
     }
 
+    void createIndirectBuffer() {
+        vk::BufferCreateInfo bufferInfo{};
+        bufferInfo.size = sizeof(drawCmd);
+        bufferInfo.usage = vk::BufferUsageFlagBits::eIndirectBuffer;
+        bufferInfo.sharingMode = vk::SharingMode::eExclusive;
+
+        indirectBuffer = vk::raii::Buffer(device, bufferInfo);
+
+        auto memRequirements = indirectBuffer.getMemoryRequirements();
+
+        vk::MemoryAllocateInfo memoryAllocateInfo{};
+        memoryAllocateInfo.allocationSize = memRequirements.size;
+        memoryAllocateInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits,
+            vk::MemoryPropertyFlagBits::eHostVisible |
+            vk::MemoryPropertyFlagBits::eHostCoherent);
+
+        indirectBufferMemory = vk::raii::DeviceMemory(device, memoryAllocateInfo);
+
+        // write draw command data to the buffer
+        indirectBuffer.bindMemory(*indirectBufferMemory, 0);
+        void* data = indirectBufferMemory.mapMemory(0, bufferInfo.size);
+        memcpy(data, &drawCmd, bufferInfo.size);
+        indirectBufferMemory.unmapMemory();
+	}
+
     void createCommandPool() {
 		vk::CommandPoolCreateInfo poolInfo{};
         poolInfo.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
@@ -650,7 +686,7 @@ private:
             cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
             cmd.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
 
-            cmd.drawIndexed(indices.size(), 1, 0, 0, 0);
+            cmd.drawIndexedIndirect(*indirectBuffer, 0, 1, static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand)));
 
             cmd.endRendering();
         };
