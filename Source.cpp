@@ -557,26 +557,28 @@ private:
         throw std::runtime_error("failed to find suitable memory type!");
     }
 
+    void createBuffer(const vk::BufferCreateInfo& bufferInfo, const vk::MemoryPropertyFlags& properties, vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory) {
+        buffer = vk::raii::Buffer(device, bufferInfo);
+        vk::MemoryRequirements memRequirements = buffer.getMemoryRequirements();
+        vk::MemoryAllocateInfo allocInfo{};
+        allocInfo.allocationSize = memRequirements.size;
+        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
+        bufferMemory = vk::raii::DeviceMemory(device, allocInfo);
+        buffer.bindMemory(*bufferMemory, 0);
+    }
+
     void createVertexBuffer() {
         vk::BufferCreateInfo bufferInfo{};
         bufferInfo.size = sizeof(vertices[0]) * vertices.size();
         bufferInfo.usage = vk::BufferUsageFlagBits::eVertexBuffer;
-        bufferInfo.sharingMode = vk::SharingMode::eExclusive;
 
-        vertexBuffer = vk::raii::Buffer(device, bufferInfo);
-
-        auto memRequirements = vertexBuffer.getMemoryRequirements();
-
-        vk::MemoryAllocateInfo memoryAllocateInfo{};
-        memoryAllocateInfo.allocationSize = memRequirements.size;
-        memoryAllocateInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, 
+        createBuffer(
+            bufferInfo, 
             vk::MemoryPropertyFlagBits::eHostVisible | 
-            vk::MemoryPropertyFlagBits::eHostCoherent);
+            vk::MemoryPropertyFlagBits::eHostCoherent, 
+            vertexBuffer, 
+            vertexBufferMemory);
 
-        vertexBufferMemory = vk::raii::DeviceMemory(device, memoryAllocateInfo);
-
-		// write vertex data to the buffer
-        vertexBuffer.bindMemory(*vertexBufferMemory, 0);
         void* data = vertexBufferMemory.mapMemory(0, bufferInfo.size);
         memcpy(data, vertices.data(), bufferInfo.size);
         vertexBufferMemory.unmapMemory();
@@ -586,22 +588,14 @@ private:
         vk::BufferCreateInfo bufferInfo{};
         bufferInfo.size = sizeof(indices[0]) * indices.size();
         bufferInfo.usage = vk::BufferUsageFlagBits::eIndexBuffer;
-        bufferInfo.sharingMode = vk::SharingMode::eExclusive;
-
-        indexBuffer = vk::raii::Buffer(device, bufferInfo);
-
-        auto memRequirements = indexBuffer.getMemoryRequirements();
-
-        vk::MemoryAllocateInfo memoryAllocateInfo{};
-        memoryAllocateInfo.allocationSize = memRequirements.size;
-        memoryAllocateInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits,
+        
+        createBuffer(
+            bufferInfo,
             vk::MemoryPropertyFlagBits::eHostVisible |
-            vk::MemoryPropertyFlagBits::eHostCoherent);
+            vk::MemoryPropertyFlagBits::eHostCoherent,
+            indexBuffer,
+            indexBufferMemory);
 
-        indexBufferMemory = vk::raii::DeviceMemory(device, memoryAllocateInfo);
-
-        // write index data to the buffer
-        indexBuffer.bindMemory(*indexBufferMemory, 0);
         void* data = indexBufferMemory.mapMemory(0, bufferInfo.size);
         memcpy(data, indices.data(), bufferInfo.size);
         indexBufferMemory.unmapMemory();
@@ -611,22 +605,14 @@ private:
         vk::BufferCreateInfo bufferInfo{};
         bufferInfo.size = sizeof(drawCmd);
         bufferInfo.usage = vk::BufferUsageFlagBits::eIndirectBuffer;
-        bufferInfo.sharingMode = vk::SharingMode::eExclusive;
-
-        indirectBuffer = vk::raii::Buffer(device, bufferInfo);
-
-        auto memRequirements = indirectBuffer.getMemoryRequirements();
-
-        vk::MemoryAllocateInfo memoryAllocateInfo{};
-        memoryAllocateInfo.allocationSize = memRequirements.size;
-        memoryAllocateInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits,
+        
+        createBuffer(
+            bufferInfo,
             vk::MemoryPropertyFlagBits::eHostVisible |
-            vk::MemoryPropertyFlagBits::eHostCoherent);
+            vk::MemoryPropertyFlagBits::eHostCoherent,
+            indirectBuffer,
+            indirectBufferMemory);
 
-        indirectBufferMemory = vk::raii::DeviceMemory(device, memoryAllocateInfo);
-
-        // write draw command data to the buffer
-        indirectBuffer.bindMemory(*indirectBufferMemory, 0);
         void* data = indirectBufferMemory.mapMemory(0, bufferInfo.size);
         memcpy(data, &drawCmd, bufferInfo.size);
         indirectBufferMemory.unmapMemory();
