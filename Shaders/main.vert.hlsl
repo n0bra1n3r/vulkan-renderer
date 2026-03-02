@@ -1,6 +1,6 @@
 struct VertexInput
 {
-    float2 position;
+    float2 position : ATTRIB0;
 };
 
 struct VertexOutput

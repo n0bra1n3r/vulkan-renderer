@@ -62,9 +62,15 @@ struct Vertex
 
 const std::vector<Vertex> vertices =
 {
-    {{0.0, -0.5}},
+    {{-0.5, -0.5}},
+    {{0.5, -0.5}},
     {{0.5, 0.5}},
     {{-0.5, 0.5}}
+};
+
+const std::vector<uint32_t> indices =
+{
+    0, 1, 2, 2, 3, 0
 };
 
 class HelloTriangleApplication {
@@ -97,6 +103,8 @@ private:
 	vk::raii::CommandPool commandPool = nullptr;
     vk::raii::Buffer vertexBuffer = nullptr;
     vk::raii::DeviceMemory vertexBufferMemory = nullptr;
+    vk::raii::Buffer indexBuffer = nullptr;
+    vk::raii::DeviceMemory indexBufferMemory = nullptr;
 
     // Removed old single command buffer and sync objects:
     // vk::raii::CommandBuffer commandBuffer = nullptr;
@@ -125,6 +133,7 @@ private:
         createImageViews();
 		createGraphicsPipeline();
 		createVertexBuffer();
+        createIndexBuffer();
         createCommandPool();
 
         // create and initialize the render graph (allocates per-image command-buffers and sync)
@@ -562,6 +571,31 @@ private:
         vertexBufferMemory.unmapMemory();
 	}
 
+    void createIndexBuffer() {
+        vk::BufferCreateInfo bufferInfo{};
+        bufferInfo.size = sizeof(indices[0]) * indices.size();
+        bufferInfo.usage = vk::BufferUsageFlagBits::eIndexBuffer;
+        bufferInfo.sharingMode = vk::SharingMode::eExclusive;
+
+        indexBuffer = vk::raii::Buffer(device, bufferInfo);
+
+        auto memRequirements = indexBuffer.getMemoryRequirements();
+
+        vk::MemoryAllocateInfo memoryAllocateInfo{};
+        memoryAllocateInfo.allocationSize = memRequirements.size;
+        memoryAllocateInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits,
+            vk::MemoryPropertyFlagBits::eHostVisible |
+            vk::MemoryPropertyFlagBits::eHostCoherent);
+
+        indexBufferMemory = vk::raii::DeviceMemory(device, memoryAllocateInfo);
+
+        // write index data to the buffer
+        indexBuffer.bindMemory(*indexBufferMemory, 0);
+        void* data = indexBufferMemory.mapMemory(0, bufferInfo.size);
+        memcpy(data, indices.data(), bufferInfo.size);
+        indexBufferMemory.unmapMemory();
+    }
+
     void createCommandPool() {
 		vk::CommandPoolCreateInfo poolInfo{};
         poolInfo.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
@@ -609,13 +643,14 @@ private:
 
             cmd.beginRendering(renderingInfo);
             cmd.bindVertexBuffers(0, *vertexBuffer, { 0 });
+            cmd.bindIndexBuffer(*indexBuffer, 0, vk::IndexType::eUint32);
 
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline);
 
             cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
             cmd.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
 
-            cmd.draw(3, 1, 0, 0);
+            cmd.drawIndexed(indices.size(), 1, 0, 0, 0);
 
             cmd.endRendering();
         };
