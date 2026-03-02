@@ -142,13 +142,12 @@ private:
         createSwapChain();
         createImageViews();
 		createGraphicsPipeline();
-		createVertexBuffer();
-        createIndexBuffer();
-        createIndirectBuffer();
         createCommandPool();
-
         // create and initialize the render graph (allocates per-image command-buffers and sync)
         initRenderGraph();
+        createVertexBuffer();
+        createIndexBuffer();
+        createIndirectBuffer();
     }
 
     void createInstance() {
@@ -545,6 +544,16 @@ private:
         graphicsPipeline = vk::raii::Pipeline(device, nullptr, pipelineInfo);
 	}
 
+    void createCommandPool() {
+        vk::CommandPoolCreateInfo poolInfo{};
+        poolInfo.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
+        poolInfo.queueFamilyIndex = graphicsFamily;
+
+        commandPool = vk::raii::CommandPool(device, poolInfo);
+
+        // keep old single-command allocation removed: render graph will allocate per-image command buffers
+    }
+
     uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) {
         auto memProperties = physicalDevice.getMemoryProperties();
 
@@ -567,65 +576,84 @@ private:
         buffer.bindMemory(*bufferMemory, 0);
     }
 
+    template<class T>
+    void uploadBuffer(const std::vector<T>& contents, const vk::raii::Buffer& buffer) {
+        vk::BufferCreateInfo stagingInfo{};
+        stagingInfo.size = sizeof(contents[0]) * contents.size();
+        stagingInfo.usage = vk::BufferUsageFlagBits::eTransferSrc;
+
+        vk::raii::Buffer stagingBuffer = nullptr;
+        vk::raii::DeviceMemory stagingBufferMemory = nullptr;
+
+        createBuffer(
+            stagingInfo,
+            vk::MemoryPropertyFlagBits::eHostVisible |
+            vk::MemoryPropertyFlagBits::eHostCoherent,
+            stagingBuffer,
+            stagingBufferMemory);
+
+        void* data = stagingBufferMemory.mapMemory(0, stagingInfo.size);
+        memcpy(data, contents.data(), stagingInfo.size);
+        stagingBufferMemory.unmapMemory();
+
+        vk::CommandBufferAllocateInfo allocInfo{};
+        allocInfo.commandPool = commandPool;
+        allocInfo.level = vk::CommandBufferLevel::ePrimary;
+        allocInfo.commandBufferCount = 1;
+
+        auto commandCopyBuffer = std::move(device.allocateCommandBuffers(allocInfo).front());
+        commandCopyBuffer.begin(vk::CommandBufferBeginInfo{ vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
+        commandCopyBuffer.copyBuffer(stagingBuffer, buffer, vk::BufferCopy(0, 0, stagingInfo.size));
+        commandCopyBuffer.end();
+
+        vk::SubmitInfo submitInfo{};
+		submitInfo.commandBufferCount = 1;
+		submitInfo.pCommandBuffers = &*commandCopyBuffer;
+
+        graphicsQueue.submit(submitInfo, nullptr);
+        graphicsQueue.waitIdle();
+    }
+
     void createVertexBuffer() {
         vk::BufferCreateInfo bufferInfo{};
         bufferInfo.size = sizeof(vertices[0]) * vertices.size();
-        bufferInfo.usage = vk::BufferUsageFlagBits::eVertexBuffer;
+        bufferInfo.usage = vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst;
 
         createBuffer(
             bufferInfo, 
-            vk::MemoryPropertyFlagBits::eHostVisible | 
-            vk::MemoryPropertyFlagBits::eHostCoherent, 
+            vk::MemoryPropertyFlagBits::eDeviceLocal, 
             vertexBuffer, 
             vertexBufferMemory);
 
-        void* data = vertexBufferMemory.mapMemory(0, bufferInfo.size);
-        memcpy(data, vertices.data(), bufferInfo.size);
-        vertexBufferMemory.unmapMemory();
+		uploadBuffer(vertices, vertexBuffer);
 	}
 
     void createIndexBuffer() {
         vk::BufferCreateInfo bufferInfo{};
         bufferInfo.size = sizeof(indices[0]) * indices.size();
-        bufferInfo.usage = vk::BufferUsageFlagBits::eIndexBuffer;
+        bufferInfo.usage = vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst;
         
         createBuffer(
             bufferInfo,
-            vk::MemoryPropertyFlagBits::eHostVisible |
-            vk::MemoryPropertyFlagBits::eHostCoherent,
+            vk::MemoryPropertyFlagBits::eDeviceLocal,
             indexBuffer,
             indexBufferMemory);
 
-        void* data = indexBufferMemory.mapMemory(0, bufferInfo.size);
-        memcpy(data, indices.data(), bufferInfo.size);
-        indexBufferMemory.unmapMemory();
+		uploadBuffer(indices, indexBuffer);
     }
 
     void createIndirectBuffer() {
         vk::BufferCreateInfo bufferInfo{};
         bufferInfo.size = sizeof(drawCmd);
-        bufferInfo.usage = vk::BufferUsageFlagBits::eIndirectBuffer;
+        bufferInfo.usage = vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst;
         
         createBuffer(
             bufferInfo,
-            vk::MemoryPropertyFlagBits::eHostVisible |
-            vk::MemoryPropertyFlagBits::eHostCoherent,
+            vk::MemoryPropertyFlagBits::eDeviceLocal,
             indirectBuffer,
             indirectBufferMemory);
 
-        void* data = indirectBufferMemory.mapMemory(0, bufferInfo.size);
-        memcpy(data, &drawCmd, bufferInfo.size);
-        indirectBufferMemory.unmapMemory();
-	}
-
-    void createCommandPool() {
-		vk::CommandPoolCreateInfo poolInfo{};
-        poolInfo.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
-        poolInfo.queueFamilyIndex = graphicsFamily;
-
-        commandPool = vk::raii::CommandPool(device, poolInfo);
-
-		// keep old single-command allocation removed: render graph will allocate per-image command buffers
+        uploadBuffer(std::vector<vk::DrawIndexedIndirectCommand>{ drawCmd }, indirectBuffer);
 	}
 
     // New: create and initialize the RenderGraph and add the passes used by the app
