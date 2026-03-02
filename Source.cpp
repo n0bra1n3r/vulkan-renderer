@@ -10,6 +10,7 @@
 #include <GLFW/glfw3.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
+#include <glm/glm.hpp>
 
 #include "RenderGraph.hpp"
 
@@ -41,6 +42,31 @@ constexpr const T& clamp(const T& v, const T& lo, const T& hi)
     return (v < lo) ? lo : (hi < v) ? hi : v;
 }
 
+struct Vertex
+{
+	glm::vec2 position;
+
+    static vk::VertexInputBindingDescription getBindingDescription() {
+        vk::VertexInputBindingDescription bindingDescription{};
+        bindingDescription.binding = 0;
+        bindingDescription.stride = sizeof(Vertex);
+        return bindingDescription;
+	}
+
+    static std::array<vk::VertexInputAttributeDescription, 1> getAttributeDescriptions() {
+        return {
+            vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, position))
+        };
+    }
+};
+
+const std::vector<Vertex> vertices =
+{
+    {{0.0, -0.5}},
+    {{0.5, 0.5}},
+    {{-0.5, 0.5}}
+};
+
 class HelloTriangleApplication {
 public:
     void run() {
@@ -69,6 +95,8 @@ private:
     vk::raii::PipelineLayout pipelineLayout = nullptr;
     vk::raii::Pipeline graphicsPipeline = nullptr;
 	vk::raii::CommandPool commandPool = nullptr;
+    vk::raii::Buffer vertexBuffer = nullptr;
+    vk::raii::DeviceMemory vertexBufferMemory = nullptr;
 
     // Removed old single command buffer and sync objects:
     // vk::raii::CommandBuffer commandBuffer = nullptr;
@@ -96,6 +124,7 @@ private:
         createSwapChain();
         createImageViews();
 		createGraphicsPipeline();
+		createVertexBuffer();
         createCommandPool();
 
         // create and initialize the render graph (allocates per-image command-buffers and sync)
@@ -435,7 +464,14 @@ private:
 
         vk::PipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
 
+		auto bindingDescription = Vertex::getBindingDescription();
+		auto attributeDescriptions = Vertex::getAttributeDescriptions();
+
         vk::PipelineVertexInputStateCreateInfo vertexInputInfo{};
+		vertexInputInfo.vertexBindingDescriptionCount = 1;
+		vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+		vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+		vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
 
         vk::PipelineInputAssemblyStateCreateInfo inputAssembly{};
         inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
@@ -489,6 +525,43 @@ private:
         graphicsPipeline = vk::raii::Pipeline(device, nullptr, pipelineInfo);
 	}
 
+    uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) {
+        auto memProperties = physicalDevice.getMemoryProperties();
+
+        for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+            if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+                return i;
+            }
+        }
+
+        throw std::runtime_error("failed to find suitable memory type!");
+    }
+
+    void createVertexBuffer() {
+        vk::BufferCreateInfo bufferInfo{};
+        bufferInfo.size = sizeof(vertices[0]) * vertices.size();
+        bufferInfo.usage = vk::BufferUsageFlagBits::eVertexBuffer;
+        bufferInfo.sharingMode = vk::SharingMode::eExclusive;
+
+        vertexBuffer = vk::raii::Buffer(device, bufferInfo);
+
+        auto memRequirements = vertexBuffer.getMemoryRequirements();
+
+        vk::MemoryAllocateInfo memoryAllocateInfo{};
+        memoryAllocateInfo.allocationSize = memRequirements.size;
+        memoryAllocateInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, 
+            vk::MemoryPropertyFlagBits::eHostVisible | 
+            vk::MemoryPropertyFlagBits::eHostCoherent);
+
+        vertexBufferMemory = vk::raii::DeviceMemory(device, memoryAllocateInfo);
+
+		// write vertex data to the buffer
+        vertexBuffer.bindMemory(*vertexBufferMemory, 0);
+        void* data = vertexBufferMemory.mapMemory(0, bufferInfo.size);
+        memcpy(data, vertices.data(), bufferInfo.size);
+        vertexBufferMemory.unmapMemory();
+	}
+
     void createCommandPool() {
 		vk::CommandPoolCreateInfo poolInfo{};
         poolInfo.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
@@ -535,6 +608,7 @@ private:
             renderingInfo.pColorAttachments = &attachmentInfo;
 
             cmd.beginRendering(renderingInfo);
+            cmd.bindVertexBuffers(0, *vertexBuffer, { 0 });
 
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline);
 

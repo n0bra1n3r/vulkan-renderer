@@ -1,8 +1,6 @@
-static float2 positions[3] =
+struct VertexInput
 {
-    float2(0.0, -0.5),
-    float2(0.5, 0.5),
-    float2(-0.5, 0.5)
+    float2 position;
 };
 
 struct VertexOutput
@@ -10,9 +8,9 @@ struct VertexOutput
     float4 sv_position : SV_Position;
 };
 
-VertexOutput main(uint vid : SV_VertexID)
+VertexOutput main(VertexInput input)
 {
     VertexOutput output;
-    output.sv_position = float4(positions[vid], 0.0, 1.0);
+    output.sv_position = float4(input.position, 0.0, 1.0);
     return output;
 }
