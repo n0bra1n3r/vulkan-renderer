@@ -3,6 +3,7 @@
 #include <iostream>
 #include <memory>
 #include <stdexcept>
+#include <chrono>
 
 #define VK_USE_PLATFORM_WIN32_KHR
 #include <vulkan/vulkan_raii.hpp>
@@ -10,7 +11,9 @@
 #include <GLFW/glfw3.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
+#define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include "RenderGraph.hpp"
 
@@ -41,6 +44,13 @@ constexpr const T& clamp(const T& v, const T& lo, const T& hi)
 {
     return (v < lo) ? lo : (hi < v) ? hi : v;
 }
+
+struct UniformBufferObject
+{
+    glm::mat4 model;
+    glm::mat4 view;
+    glm::mat4 proj;
+};
 
 struct Vertex
 {
@@ -106,6 +116,7 @@ private:
     vk::raii::SwapchainKHR swapChain = nullptr;
     std::vector<vk::Image> swapChainImages{};
     std::vector<vk::raii::ImageView> swapChainImageViews{};
+    vk::raii::DescriptorSetLayout descriptorSetLayout = nullptr;
     vk::raii::PipelineLayout pipelineLayout = nullptr;
     vk::raii::Pipeline graphicsPipeline = nullptr;
 	vk::raii::CommandPool commandPool = nullptr;
@@ -115,6 +126,11 @@ private:
     vk::raii::DeviceMemory indexBufferMemory = nullptr;
     vk::raii::Buffer indirectBuffer = nullptr;
     vk::raii::DeviceMemory indirectBufferMemory = nullptr;
+    std::vector<vk::raii::Buffer> uniformBuffers;
+    std::vector<vk::raii::DeviceMemory> uniformBuffersMemory;
+    std::vector<void*> uniformBuffersMapped;
+    vk::raii::DescriptorPool descriptorPool = nullptr;
+    std::vector<vk::raii::DescriptorSet> descriptorSets;
 
     // Removed old single command buffer and sync objects:
     // vk::raii::CommandBuffer commandBuffer = nullptr;
@@ -141,6 +157,7 @@ private:
         createLogicalDevice();
         createSwapChain();
         createImageViews();
+        createDescriptorSetLayout();
 		createGraphicsPipeline();
         createCommandPool();
         // create and initialize the render graph (allocates per-image command-buffers and sync)
@@ -148,6 +165,9 @@ private:
         createVertexBuffer();
         createIndexBuffer();
         createIndirectBuffer();
+        createUniformBuffers();
+		createDescriptorPool();
+        createDescriptorSets();
     }
 
     void createInstance() {
@@ -460,6 +480,15 @@ private:
 		return vk::raii::ShaderModule{ device, createInfo };
     }
 
+    void createDescriptorSetLayout() {
+        vk::DescriptorSetLayoutBinding uboLayoutBinding(0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr);
+
+        vk::DescriptorSetLayoutCreateInfo layoutInfo{};
+        layoutInfo.bindingCount = 1;
+        layoutInfo.pBindings = &uboLayoutBinding;
+        descriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
+    }
+
     void createGraphicsPipeline() {
         vk::PipelineRenderingCreateInfo pipelineRenderingCreateInfo{};
         pipelineRenderingCreateInfo.colorAttachmentCount = 1;
@@ -507,7 +536,6 @@ private:
 
         vk::PipelineRasterizationStateCreateInfo rasterizer{};
         rasterizer.cullMode = vk::CullModeFlagBits::eBack;
-        rasterizer.frontFace = vk::FrontFace::eClockwise;
         rasterizer.lineWidth = 1.0f;
 
         vk::PipelineMultisampleStateCreateInfo multisampling{};
@@ -525,6 +553,8 @@ private:
         colorBlending.pAttachments = &colorBlendAttachment;
 
         vk::PipelineLayoutCreateInfo pipelineLayoutInfo{};
+        pipelineLayoutInfo.setLayoutCount = 1;
+        pipelineLayoutInfo.pSetLayouts = &*descriptorSetLayout;
 
         pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
 
@@ -656,11 +686,76 @@ private:
         uploadBuffer(std::vector<vk::DrawIndexedIndirectCommand>{ drawCmd }, indirectBuffer);
 	}
 
+    void createUniformBuffers() {
+        uniformBuffers.clear();
+        uniformBuffersMemory.clear();
+        uniformBuffersMapped.clear();
+
+        vk::BufferCreateInfo bufferInfo{};
+        bufferInfo.size = sizeof(UniformBufferObject);
+        bufferInfo.usage = vk::BufferUsageFlagBits::eUniformBuffer;
+
+        for (size_t i = 0; i < swapChainImages.size(); i++) {
+            vk::raii::Buffer uniformBuffer = nullptr;
+            vk::raii::DeviceMemory uniformBufferMemory = nullptr;
+            createBuffer(
+                bufferInfo,
+                vk::MemoryPropertyFlagBits::eHostVisible |
+                vk::MemoryPropertyFlagBits::eHostCoherent,
+                uniformBuffer,
+                uniformBufferMemory);
+            uniformBuffers.emplace_back(std::move(uniformBuffer));
+            uniformBuffersMemory.emplace_back(std::move(uniformBufferMemory));
+            uniformBuffersMapped.emplace_back(uniformBuffersMemory[i].mapMemory(0, bufferInfo.size));
+        }
+    }
+
+    void createDescriptorPool() {
+        vk::DescriptorPoolSize poolSize(vk::DescriptorType::eUniformBuffer, swapChainImages.size());
+
+        vk::DescriptorPoolCreateInfo poolInfo{};
+        poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
+        poolInfo.maxSets = swapChainImages.size();
+        poolInfo.poolSizeCount = 1;
+        poolInfo.pPoolSizes = &poolSize;
+
+        descriptorPool = vk::raii::DescriptorPool(device, poolInfo);
+	}
+
+    void createDescriptorSets() {
+        std::vector<vk::DescriptorSetLayout> layouts(swapChainImages.size(), *descriptorSetLayout);
+
+        vk::DescriptorSetAllocateInfo allocInfo{};
+        allocInfo.descriptorPool = descriptorPool;
+        allocInfo.descriptorSetCount = static_cast<uint32_t>(layouts.size());
+        allocInfo.pSetLayouts = layouts.data();
+
+        descriptorSets.clear();
+        descriptorSets = device.allocateDescriptorSets(allocInfo);
+
+        for (size_t i = 0; i < swapChainImages.size(); i++) {
+            vk::DescriptorBufferInfo bufferInfo{};
+            bufferInfo.buffer = uniformBuffers[i];
+            bufferInfo.offset = 0;
+            bufferInfo.range = sizeof(UniformBufferObject);
+
+            vk::WriteDescriptorSet descriptorWrite{};
+            descriptorWrite.dstSet = descriptorSets[i];
+            descriptorWrite.dstBinding = 0;
+            descriptorWrite.dstArrayElement = 0;
+            descriptorWrite.descriptorCount = 1;
+            descriptorWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
+            descriptorWrite.pBufferInfo = &bufferInfo;
+
+            device.updateDescriptorSets(descriptorWrite, {});
+        }
+	}
+
     // New: create and initialize the RenderGraph and add the passes used by the app
     void initRenderGraph()
     {
         // construct the render graph (holds references, does NOT copy objects)
-        renderGraph.reset(new RenderGraph(device, swapChain, graphicsQueue, presentQueue, commandPool, swapChainImageViews, swapChainExtent));
+        renderGraph.reset(new RenderGraph(device, swapChain, graphicsQueue, presentQueue, commandPool));
 
         // Main rendering pass: transition Undefined -> ColorAttachmentOptimal and record in the pass
         RenderPassNode mainPass{};
@@ -675,6 +770,8 @@ private:
         // record the same rendering commands previously inside recordCommandBuffer (beginRendering, bind pipeline, draw, endRendering)
         mainPass.recordFunc = [this](vk::raii::CommandBuffer& cmd, uint32_t imageIndex)
         {
+			updateUniformBuffer(imageIndex);
+
             vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
             vk::RenderingAttachmentInfo attachmentInfo{};
             attachmentInfo.imageView = swapChainImageViews[imageIndex];
@@ -694,6 +791,7 @@ private:
             cmd.beginRendering(renderingInfo);
             cmd.bindVertexBuffers(0, *vertexBuffer, { 0 });
             cmd.bindIndexBuffer(*indexBuffer, 0, vk::IndexType::eUint32);
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, *descriptorSets[imageIndex], nullptr);
 
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline);
 
@@ -722,6 +820,21 @@ private:
 
         // finally initialize (allocates per-image command buffers and per-frame sync objects)
         renderGraph->init();
+    }
+
+    void updateUniformBuffer(uint32_t currentImage) {
+        static auto startTime = std::chrono::high_resolution_clock::now();
+
+        auto currentTime = std::chrono::high_resolution_clock::now();
+        float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+
+        UniformBufferObject ubo{};
+        ubo.model = rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        ubo.view = lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        ubo.proj = glm::perspective(glm::radians(45.0f), static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height), 0.1f, 10.0f);
+        ubo.proj[1][1] *= -1;
+
+        memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
     }
 
     // removed transitionImageLayout and recordCommandBuffer methods - RenderGraph now handles transitions + per-pass recording

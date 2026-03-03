@@ -57,16 +57,12 @@ public:
                 vk::raii::SwapchainKHR& swapchain,
                 vk::raii::Queue& graphicsQueue,
                 vk::raii::Queue& presentQueue,
-                vk::raii::CommandPool& commandPool,
-                std::vector<vk::raii::ImageView>& swapchainImageViews,
-                vk::Extent2D swapChainExtent)
+                vk::raii::CommandPool& commandPool)
         : m_device(device),
           m_swapchain(swapchain),
           m_graphicsQueue(graphicsQueue),
           m_presentQueue(presentQueue),
-          m_commandPool(commandPool),
-          m_imageViews(swapchainImageViews),
-          m_swapChainExtent(swapChainExtent)
+          m_commandPool(commandPool)
     {
         // cache images
         m_swapchainImages = m_swapchain.getImages();
@@ -209,8 +205,6 @@ private:
     vk::raii::Queue& m_graphicsQueue;
     vk::raii::Queue& m_presentQueue;
     vk::raii::CommandPool& m_commandPool;
-    std::vector<vk::raii::ImageView>& m_imageViews;
-    vk::Extent2D m_swapChainExtent;
 
     // swapchain images (VkImage handles) used for transitions
     std::vector<vk::Image> m_swapchainImages;
