@@ -6,6 +6,7 @@ struct VertexInput
 struct VertexOutput
 {
     float4 sv_position : SV_Position;
+    float3 colour : COLOR0;
 };
 
 struct UniformBuffer
@@ -15,11 +16,19 @@ struct UniformBuffer
     float4x4 proj;
 };
 
+struct StorageBuffer
+{
+    float3 colour;
+};
+
 ConstantBuffer<UniformBuffer> ubo;
+
+StructuredBuffer<StorageBuffer> ssbo;
 
 VertexOutput main(VertexInput input)
 {
     VertexOutput output;
     output.sv_position = mul(ubo.proj, mul(ubo.view, mul(ubo.model, float4(input.position, 0.0, 1.0))));
+    output.colour = ssbo[0].colour;
     return output;
 }

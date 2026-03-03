@@ -45,13 +45,6 @@ constexpr const T& clamp(const T& v, const T& lo, const T& hi)
     return (v < lo) ? lo : (hi < v) ? hi : v;
 }
 
-struct UniformBufferObject
-{
-    glm::mat4 model;
-    glm::mat4 view;
-    glm::mat4 proj;
-};
-
 struct Vertex
 {
 	glm::vec2 position;
@@ -91,6 +84,18 @@ const vk::DrawIndexedIndirectCommand drawCmd = {
     0  // firstInstance
 };
 
+struct UniformBufferObject
+{
+    glm::mat4 model;
+    glm::mat4 view;
+    glm::mat4 proj;
+};
+
+struct StorageBufferObject
+{
+    glm::vec3 colour;
+};
+
 class HelloTriangleApplication {
 public:
     void run() {
@@ -126,6 +131,8 @@ private:
     vk::raii::DeviceMemory indexBufferMemory = nullptr;
     vk::raii::Buffer indirectBuffer = nullptr;
     vk::raii::DeviceMemory indirectBufferMemory = nullptr;
+    vk::raii::Buffer storageBuffer = nullptr;
+    vk::raii::DeviceMemory storageBufferMemory = nullptr;
     std::vector<vk::raii::Buffer> uniformBuffers;
     std::vector<vk::raii::DeviceMemory> uniformBuffersMemory;
     std::vector<void*> uniformBuffersMapped;
@@ -166,6 +173,7 @@ private:
         createIndexBuffer();
         createIndirectBuffer();
         createUniformBuffers();
+        createStorageBuffer();
 		createDescriptorPool();
         createDescriptorSets();
     }
@@ -482,10 +490,14 @@ private:
 
     void createDescriptorSetLayout() {
         vk::DescriptorSetLayoutBinding uboLayoutBinding(0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr);
+        vk::DescriptorSetLayoutBinding ssboLayoutBinding(1, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr);
+
+        std::array<vk::DescriptorSetLayoutBinding, 2> bindings = { uboLayoutBinding, ssboLayoutBinding };
 
         vk::DescriptorSetLayoutCreateInfo layoutInfo{};
-        layoutInfo.bindingCount = 1;
-        layoutInfo.pBindings = &uboLayoutBinding;
+        layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+        layoutInfo.pBindings = bindings.data();
+
         descriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
     }
 
@@ -710,17 +722,37 @@ private:
         }
     }
 
+    void createStorageBuffer() {
+        vk::BufferCreateInfo bufferInfo{};
+        bufferInfo.size = sizeof(StorageBufferObject);
+        bufferInfo.usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst;
+
+        createBuffer(
+            bufferInfo,
+            vk::MemoryPropertyFlagBits::eDeviceLocal,
+            storageBuffer,
+            storageBufferMemory);
+
+		StorageBufferObject ssboData{};
+		ssboData.colour = glm::vec3(1.0f, 1.0f, 0.0f);
+
+        uploadBuffer(std::vector<StorageBufferObject>{ssboData}, storageBuffer);
+    }
+
     void createDescriptorPool() {
-        vk::DescriptorPoolSize poolSize(vk::DescriptorType::eUniformBuffer, swapChainImages.size());
+        std::array<vk::DescriptorPoolSize, 2> poolSizes = {
+            vk::DescriptorPoolSize{ vk::DescriptorType::eUniformBuffer, static_cast<uint32_t>(swapChainImages.size()) },
+            vk::DescriptorPoolSize{ vk::DescriptorType::eStorageBuffer, static_cast<uint32_t>(swapChainImages.size()) }
+        };
 
         vk::DescriptorPoolCreateInfo poolInfo{};
         poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-        poolInfo.maxSets = swapChainImages.size();
-        poolInfo.poolSizeCount = 1;
-        poolInfo.pPoolSizes = &poolSize;
+        poolInfo.maxSets = static_cast<uint32_t>(swapChainImages.size());
+        poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+        poolInfo.pPoolSizes = poolSizes.data();
 
         descriptorPool = vk::raii::DescriptorPool(device, poolInfo);
-	}
+    }
 
     void createDescriptorSets() {
         std::vector<vk::DescriptorSetLayout> layouts(swapChainImages.size(), *descriptorSetLayout);
@@ -730,26 +762,41 @@ private:
         allocInfo.descriptorSetCount = static_cast<uint32_t>(layouts.size());
         allocInfo.pSetLayouts = layouts.data();
 
-        descriptorSets.clear();
         descriptorSets = device.allocateDescriptorSets(allocInfo);
 
+        // storage buffer descriptor info (same buffer for all sets)
+        vk::DescriptorBufferInfo storageBufferInfo{};
+        storageBufferInfo.buffer = storageBuffer;
+        storageBufferInfo.offset = 0;
+        storageBufferInfo.range = sizeof(StorageBufferObject);
+
         for (size_t i = 0; i < swapChainImages.size(); i++) {
-            vk::DescriptorBufferInfo bufferInfo{};
-            bufferInfo.buffer = uniformBuffers[i];
-            bufferInfo.offset = 0;
-            bufferInfo.range = sizeof(UniformBufferObject);
+            vk::DescriptorBufferInfo uboBufferInfo{};
+            uboBufferInfo.buffer = uniformBuffers[i];
+            uboBufferInfo.offset = 0;
+            uboBufferInfo.range = sizeof(UniformBufferObject);
 
-            vk::WriteDescriptorSet descriptorWrite{};
-            descriptorWrite.dstSet = descriptorSets[i];
-            descriptorWrite.dstBinding = 0;
-            descriptorWrite.dstArrayElement = 0;
-            descriptorWrite.descriptorCount = 1;
-            descriptorWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
-            descriptorWrite.pBufferInfo = &bufferInfo;
+            vk::WriteDescriptorSet uboWrite{};
+            uboWrite.dstSet = descriptorSets[i];
+            uboWrite.dstBinding = 0;
+            uboWrite.dstArrayElement = 0;
+            uboWrite.descriptorCount = 1;
+            uboWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
+            uboWrite.pBufferInfo = &uboBufferInfo;
 
-            device.updateDescriptorSets(descriptorWrite, {});
+            device.updateDescriptorSets(uboWrite, {});
+
+            vk::WriteDescriptorSet ssboWrite{};
+            ssboWrite.dstSet = descriptorSets[i];
+            ssboWrite.dstBinding = 1;
+            ssboWrite.dstArrayElement = 0;
+            ssboWrite.descriptorCount = 1;
+            ssboWrite.descriptorType = vk::DescriptorType::eStorageBuffer;
+            ssboWrite.pBufferInfo = &storageBufferInfo;
+
+            device.updateDescriptorSets(ssboWrite, {});
         }
-	}
+    }
 
     // New: create and initialize the RenderGraph and add the passes used by the app
     void initRenderGraph()
