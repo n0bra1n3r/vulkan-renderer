@@ -14,6 +14,8 @@
 #define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
 
 #include "RenderGraph.hpp"
 
@@ -124,6 +126,8 @@ private:
     vk::raii::DescriptorSetLayout descriptorSetLayout = nullptr;
     vk::raii::PipelineLayout pipelineLayout = nullptr;
     vk::raii::Pipeline graphicsPipeline = nullptr;
+    vk::raii::Image textureImage = nullptr;
+    vk::raii::DeviceMemory textureImageMemory = nullptr;
 	vk::raii::CommandPool commandPool = nullptr;
     vk::raii::Buffer vertexBuffer = nullptr;
     vk::raii::DeviceMemory vertexBufferMemory = nullptr;
@@ -169,6 +173,7 @@ private:
         createCommandPool();
         // create and initialize the render graph (allocates per-image command-buffers and sync)
         initRenderGraph();
+		createTextureImage();
         createVertexBuffer();
         createIndexBuffer();
         createIndirectBuffer();
@@ -618,6 +623,16 @@ private:
         buffer.bindMemory(*bufferMemory, 0);
     }
 
+    void createImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryPropertyFlags properties, vk::raii::Image& image, vk::raii::DeviceMemory& imageMemory) {
+        image = vk::raii::Image(device, imageInfo);
+        vk::MemoryRequirements memRequirements = image.getMemoryRequirements();
+        vk::MemoryAllocateInfo allocInfo{};
+        allocInfo.allocationSize = memRequirements.size;
+        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
+        imageMemory = vk::raii::DeviceMemory(device, allocInfo);
+        image.bindMemory(imageMemory, 0);
+    }
+
     template<class T>
     void uploadBuffer(const std::vector<T>& contents, const vk::raii::Buffer& buffer) {
         vk::BufferCreateInfo stagingInfo{};
@@ -644,7 +659,7 @@ private:
         allocInfo.commandBufferCount = 1;
 
         auto commandCopyBuffer = std::move(device.allocateCommandBuffers(allocInfo).front());
-        commandCopyBuffer.begin(vk::CommandBufferBeginInfo{ vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
+        commandCopyBuffer.begin({ vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
         commandCopyBuffer.copyBuffer(stagingBuffer, buffer, vk::BufferCopy(0, 0, stagingInfo.size));
         commandCopyBuffer.end();
 
@@ -654,6 +669,116 @@ private:
 
         graphicsQueue.submit(submitInfo, nullptr);
         graphicsQueue.waitIdle();
+    }
+
+    template<class T>
+    void uploadImage(const std::vector<T>& contents, uint32_t width, uint32_t height, const vk::raii::Image& image) {
+        vk::BufferCreateInfo stagingInfo{};
+        stagingInfo.size = sizeof(contents[0]) * contents.size();
+        stagingInfo.usage = vk::BufferUsageFlagBits::eTransferSrc;
+
+        vk::raii::Buffer stagingBuffer = nullptr;
+        vk::raii::DeviceMemory stagingBufferMemory = nullptr;
+
+        createBuffer(
+            stagingInfo,
+            vk::MemoryPropertyFlagBits::eHostVisible |
+            vk::MemoryPropertyFlagBits::eHostCoherent,
+            stagingBuffer,
+            stagingBufferMemory);
+
+        void* data = stagingBufferMemory.mapMemory(0, stagingInfo.size);
+        memcpy(data, contents.data(), stagingInfo.size);
+        stagingBufferMemory.unmapMemory();
+
+        vk::CommandBufferAllocateInfo allocInfo{};
+        allocInfo.commandPool = commandPool;
+        allocInfo.level = vk::CommandBufferLevel::ePrimary;
+        allocInfo.commandBufferCount = 1;
+
+        auto commandCopyBuffer = std::move(device.allocateCommandBuffers(allocInfo).front());
+        commandCopyBuffer.begin({ vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
+		transitionImageLayout(commandCopyBuffer, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
+        vk::BufferImageCopy region{};
+        region.imageSubresource = { vk::ImageAspectFlagBits::eColor, 0, 0, 1 };
+        region.imageExtent.width = width;
+        region.imageExtent.height = height;
+        region.imageExtent.depth = 1;
+        commandCopyBuffer.copyBufferToImage(stagingBuffer, image, vk::ImageLayout::eTransferDstOptimal, { region });
+        transitionImageLayout(commandCopyBuffer, image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+        commandCopyBuffer.end();
+
+        vk::SubmitInfo submitInfo{};
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &*commandCopyBuffer;
+
+        graphicsQueue.submit(submitInfo, nullptr);
+        graphicsQueue.waitIdle();
+    }
+
+    void transitionImageLayout(const vk::raii::CommandBuffer& commandBuffer, const vk::raii::Image& image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout) {
+        vk::ImageMemoryBarrier barrier{};
+        barrier.oldLayout = oldLayout;
+        barrier.newLayout = newLayout;
+        barrier.image = image;
+        barrier.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
+
+        vk::PipelineStageFlags sourceStage;
+        vk::PipelineStageFlags destinationStage;
+
+        if (oldLayout == vk::ImageLayout::eUndefined && newLayout == vk::ImageLayout::eTransferDstOptimal)
+        {
+            barrier.srcAccessMask = {};
+            barrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
+
+            sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
+            destinationStage = vk::PipelineStageFlagBits::eTransfer;
+        }
+        else if (oldLayout == vk::ImageLayout::eTransferDstOptimal && newLayout == vk::ImageLayout::eShaderReadOnlyOptimal)
+        {
+            barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+            barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
+            sourceStage = vk::PipelineStageFlagBits::eTransfer;
+            destinationStage = vk::PipelineStageFlagBits::eFragmentShader;
+        }
+        else
+        {
+            throw std::invalid_argument("unsupported layout transition!");
+        }
+
+        commandBuffer.pipelineBarrier(sourceStage, destinationStage, {}, {}, nullptr, barrier);
+    }
+
+    void createTextureImage() {
+        int texWidth, texHeight, texChannels;
+        auto pixels = stbi_load("Textures/statue.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+
+        if (!pixels) {
+            throw std::runtime_error("failed to load texture image!");
+        }
+
+        std::vector<uint8_t> imageBytes(pixels, pixels + (texWidth * texHeight * 4));
+
+        stbi_image_free(pixels);
+
+        vk::ImageCreateInfo imageInfo{};
+        imageInfo.imageType = vk::ImageType::e2D;
+        imageInfo.format = vk::Format::eR8G8B8A8Srgb;
+        imageInfo.extent.width = texWidth;
+        imageInfo.extent.height = texHeight;
+        imageInfo.extent.depth = 1;
+        imageInfo.mipLevels = 1;
+        imageInfo.arrayLayers = 1;
+        imageInfo.usage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled;
+
+        createImage(
+            imageInfo,
+            vk::MemoryPropertyFlagBits::eDeviceLocal,
+            textureImage,
+            textureImageMemory);
+
+		uploadImage(imageBytes, texWidth, texHeight, textureImage);
     }
 
     void createVertexBuffer() {
