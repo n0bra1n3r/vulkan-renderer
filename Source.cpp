@@ -50,6 +50,7 @@ constexpr const T& clamp(const T& v, const T& lo, const T& hi)
 struct Vertex
 {
 	glm::vec2 position;
+    glm::vec2 texCoord;
 
     static vk::VertexInputBindingDescription getBindingDescription() {
         vk::VertexInputBindingDescription bindingDescription{};
@@ -58,19 +59,20 @@ struct Vertex
         return bindingDescription;
 	}
 
-    static std::array<vk::VertexInputAttributeDescription, 1> getAttributeDescriptions() {
+    static std::array<vk::VertexInputAttributeDescription, 2> getAttributeDescriptions() {
         return {
-            vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, position))
+            vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, position)),
+            vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, texCoord))
         };
     }
 };
 
 const std::vector<Vertex> vertices =
 {
-    {{-0.5, -0.5}},
-    {{0.5, -0.5}},
-    {{0.5, 0.5}},
-    {{-0.5, 0.5}}
+    {{-0.5, -0.5}, {1.0, 0.0}},
+    {{0.5, -0.5}, {0.0, 0.0}},
+    {{0.5, 0.5}, {0.0, 1.0}},
+    {{-0.5, 0.5}, {1.0, 1.0}}
 };
 
 const std::vector<uint32_t> indices =
@@ -128,6 +130,8 @@ private:
     vk::raii::Pipeline graphicsPipeline = nullptr;
     vk::raii::Image textureImage = nullptr;
     vk::raii::DeviceMemory textureImageMemory = nullptr;
+    vk::raii::ImageView textureImageView = nullptr;
+    vk::raii::Sampler textureSampler = nullptr;
 	vk::raii::CommandPool commandPool = nullptr;
     vk::raii::Buffer vertexBuffer = nullptr;
     vk::raii::DeviceMemory vertexBufferMemory = nullptr;
@@ -174,6 +178,7 @@ private:
         // create and initialize the render graph (allocates per-image command-buffers and sync)
         initRenderGraph();
 		createTextureImage();
+        createTextureImageView();
         createVertexBuffer();
         createIndexBuffer();
         createIndirectBuffer();
@@ -284,7 +289,8 @@ private:
         deviceQueueCreateInfo.queueCount = 1;
         deviceQueueCreateInfo.pQueuePriorities = &queuePriority;
 
-        vk::PhysicalDeviceFeatures2 features2{}; // vk::PhysicalDeviceFeatures2 (empty for now)
+        vk::PhysicalDeviceFeatures2 features2{};
+        features2.features.samplerAnisotropy = true;
         vk::PhysicalDeviceVulkan13Features vulkan13Features{};
         vulkan13Features.dynamicRendering = true; // Enable dynamic rendering from Vulkan 1.3
         vulkan13Features.synchronization2 = true; // enable synchronization2 from the extension
@@ -496,8 +502,9 @@ private:
     void createDescriptorSetLayout() {
         vk::DescriptorSetLayoutBinding uboLayoutBinding(0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr);
         vk::DescriptorSetLayoutBinding ssboLayoutBinding(1, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr);
+        vk::DescriptorSetLayoutBinding samplerLayoutBinding(2, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr);
 
-        std::array<vk::DescriptorSetLayoutBinding, 2> bindings = { uboLayoutBinding, ssboLayoutBinding };
+        std::array<vk::DescriptorSetLayoutBinding, 3> bindings = { uboLayoutBinding, ssboLayoutBinding, samplerLayoutBinding };
 
         vk::DescriptorSetLayoutCreateInfo layoutInfo{};
         layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
@@ -631,6 +638,15 @@ private:
         allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
         imageMemory = vk::raii::DeviceMemory(device, allocInfo);
         image.bindMemory(imageMemory, 0);
+    }
+
+    vk::raii::ImageView createImageView(vk::raii::Image& image, vk::Format format) {
+        vk::ImageViewCreateInfo viewInfo{};
+        viewInfo.image = image;
+        viewInfo.viewType = vk::ImageViewType::e2D;
+        viewInfo.format = format;
+        viewInfo.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
+        return vk::raii::ImageView(device, viewInfo);
     }
 
     template<class T>
@@ -781,6 +797,20 @@ private:
 		uploadImage(imageBytes, texWidth, texHeight, textureImage);
     }
 
+    void createTextureImageView() {
+        textureImageView = createImageView(textureImage, vk::Format::eR8G8B8A8Srgb);
+
+        vk::PhysicalDeviceProperties properties = physicalDevice.getProperties();
+        vk::SamplerCreateInfo samplerInfo{};
+        samplerInfo.magFilter = vk::Filter::eLinear;
+        samplerInfo.minFilter = vk::Filter::eLinear;
+        samplerInfo.mipmapMode = vk::SamplerMipmapMode::eLinear;
+        samplerInfo.anisotropyEnable = true;
+        samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
+
+        textureSampler = vk::raii::Sampler(device, samplerInfo);
+    }
+
     void createVertexBuffer() {
         vk::BufferCreateInfo bufferInfo{};
         bufferInfo.size = sizeof(vertices[0]) * vertices.size();
@@ -865,9 +895,10 @@ private:
     }
 
     void createDescriptorPool() {
-        std::array<vk::DescriptorPoolSize, 2> poolSizes = {
+        std::array<vk::DescriptorPoolSize, 3> poolSizes = {
             vk::DescriptorPoolSize{ vk::DescriptorType::eUniformBuffer, static_cast<uint32_t>(swapChainImages.size()) },
-            vk::DescriptorPoolSize{ vk::DescriptorType::eStorageBuffer, static_cast<uint32_t>(swapChainImages.size()) }
+            vk::DescriptorPoolSize{ vk::DescriptorType::eStorageBuffer, static_cast<uint32_t>(swapChainImages.size()) },
+            vk::DescriptorPoolSize{ vk::DescriptorType::eCombinedImageSampler, static_cast<uint32_t>(swapChainImages.size()) },
         };
 
         vk::DescriptorPoolCreateInfo poolInfo{};
@@ -901,6 +932,11 @@ private:
             uboBufferInfo.offset = 0;
             uboBufferInfo.range = sizeof(UniformBufferObject);
 
+            vk::DescriptorImageInfo imageInfo{};
+            imageInfo.sampler = textureSampler;
+            imageInfo.imageView = textureImageView;
+            imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+
             vk::WriteDescriptorSet uboWrite{};
             uboWrite.dstSet = descriptorSets[i];
             uboWrite.dstBinding = 0;
@@ -920,6 +956,16 @@ private:
             ssboWrite.pBufferInfo = &storageBufferInfo;
 
             device.updateDescriptorSets(ssboWrite, {});
+
+            vk::WriteDescriptorSet imageWrite{};
+            imageWrite.dstSet = descriptorSets[i];
+            imageWrite.dstBinding = 2;
+            imageWrite.dstArrayElement = 0;
+            imageWrite.descriptorCount = 1;
+            imageWrite.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+            imageWrite.pImageInfo = &imageInfo;
+
+            device.updateDescriptorSets(imageWrite, {});
         }
     }
 
