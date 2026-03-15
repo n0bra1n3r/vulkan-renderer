@@ -94,16 +94,11 @@ private:
     vk::raii::DeviceMemory m_textureImageMemory = nullptr;
     vk::raii::ImageView m_textureImageView = nullptr;
     vk::raii::Sampler m_textureSampler = nullptr;
-    vk::raii::Buffer m_vertexBuffer = nullptr;
-    vk::raii::DeviceMemory m_vertexBufferMemory = nullptr;
-    vk::raii::Buffer m_indexBuffer = nullptr;
-    vk::raii::DeviceMemory m_indexBufferMemory = nullptr;
-    vk::raii::Buffer m_indirectBuffer = nullptr;
-    vk::raii::DeviceMemory m_indirectBufferMemory = nullptr;
-    vk::raii::Buffer m_storageBuffer = nullptr;
-    vk::raii::DeviceMemory m_storageBufferMemory = nullptr;
-    std::vector<vk::raii::Buffer> m_uniformBuffers;
-    std::vector<vk::raii::DeviceMemory> m_uniformBuffersMemory;
+    Gfx::Buffer m_vertexBuffer = nullptr;
+    Gfx::Buffer m_indexBuffer = nullptr;
+    Gfx::Buffer m_indirectBuffer = nullptr;
+    Gfx::Buffer m_storageBuffer = nullptr;
+    std::vector<Gfx::Buffer> m_uniformBuffers;
     std::vector<void*> m_uniformBuffersMapped;
     vk::raii::DescriptorPool m_descriptorPool = nullptr;
     std::vector<vk::raii::DescriptorSet> m_descriptorSets;
@@ -278,16 +273,6 @@ private:
         throw std::runtime_error("failed to find suitable memory type!");
     }
 
-    void createBuffer(const vk::BufferCreateInfo& bufferInfo, const vk::MemoryPropertyFlags& properties, vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory) {
-        buffer = vk::raii::Buffer(m_gfx.getDevice(), bufferInfo);
-        vk::MemoryRequirements memRequirements = buffer.getMemoryRequirements();
-        vk::MemoryAllocateInfo allocInfo{};
-        allocInfo.allocationSize = memRequirements.size;
-        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
-        bufferMemory = vk::raii::DeviceMemory(m_gfx.getDevice(), allocInfo);
-        buffer.bindMemory(*bufferMemory, 0);
-    }
-
     void createImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryPropertyFlags properties, vk::raii::Image& image, vk::raii::DeviceMemory& imageMemory) {
         image = vk::raii::Image(m_gfx.getDevice(), imageInfo);
         vk::MemoryRequirements memRequirements = image.getMemoryRequirements();
@@ -308,24 +293,18 @@ private:
     }
 
     template<class T>
-    void uploadBuffer(const std::vector<T>& contents, const vk::raii::Buffer& buffer) {
+    void uploadBuffer(const std::vector<T>& contents, const Gfx::Buffer& buffer) {
         vk::BufferCreateInfo stagingInfo{};
         stagingInfo.size = sizeof(contents[0]) * contents.size();
         stagingInfo.usage = vk::BufferUsageFlagBits::eTransferSrc;
 
-        vk::raii::Buffer stagingBuffer = nullptr;
-        vk::raii::DeviceMemory stagingBufferMemory = nullptr;
-
-        createBuffer(
-            stagingInfo,
+        auto stagingBuffer = m_gfx.makeBuffer(stagingInfo, 
             vk::MemoryPropertyFlagBits::eHostVisible |
-            vk::MemoryPropertyFlagBits::eHostCoherent,
-            stagingBuffer,
-            stagingBufferMemory);
+            vk::MemoryPropertyFlagBits::eHostCoherent);
 
-        void* data = stagingBufferMemory.mapMemory(0, stagingInfo.size);
+        void* data = stagingBuffer.map();
         memcpy(data, contents.data(), stagingInfo.size);
-        stagingBufferMemory.unmapMemory();
+        stagingBuffer.unmap();
 
         vk::CommandBufferAllocateInfo allocInfo{};
         allocInfo.commandPool = m_gfx.getCommandPool();
@@ -353,19 +332,13 @@ private:
         stagingInfo.size = sizeof(contents[0]) * contents.size();
         stagingInfo.usage = vk::BufferUsageFlagBits::eTransferSrc;
 
-        vk::raii::Buffer stagingBuffer = nullptr;
-        vk::raii::DeviceMemory stagingBufferMemory = nullptr;
-
-        createBuffer(
-            stagingInfo,
+        auto stagingBuffer = m_gfx.makeBuffer(stagingInfo,
             vk::MemoryPropertyFlagBits::eHostVisible |
-            vk::MemoryPropertyFlagBits::eHostCoherent,
-            stagingBuffer,
-            stagingBufferMemory);
+            vk::MemoryPropertyFlagBits::eHostCoherent);
 
-        void* data = stagingBufferMemory.mapMemory(0, stagingInfo.size);
+        void* data = stagingBuffer.map();
         memcpy(data, contents.data(), stagingInfo.size);
-        stagingBufferMemory.unmapMemory();
+        stagingBuffer.unmap();
 
         vk::CommandBufferAllocateInfo allocInfo{};
         allocInfo.commandPool = m_gfx.getCommandPool();
@@ -478,11 +451,7 @@ private:
         bufferInfo.size = sizeof(vertices[0]) * vertices.size();
         bufferInfo.usage = vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst;
 
-        createBuffer(
-            bufferInfo, 
-            vk::MemoryPropertyFlagBits::eDeviceLocal, 
-            m_vertexBuffer, 
-            m_vertexBufferMemory);
+		m_vertexBuffer = m_gfx.makeBuffer(bufferInfo, vk::MemoryPropertyFlagBits::eDeviceLocal);
 
 		uploadBuffer(vertices, m_vertexBuffer);
 	}
@@ -492,11 +461,7 @@ private:
         bufferInfo.size = sizeof(indices[0]) * indices.size();
         bufferInfo.usage = vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst;
         
-        createBuffer(
-            bufferInfo,
-            vk::MemoryPropertyFlagBits::eDeviceLocal,
-            m_indexBuffer,
-            m_indexBufferMemory);
+		m_indexBuffer = m_gfx.makeBuffer(bufferInfo, vk::MemoryPropertyFlagBits::eDeviceLocal);
 
 		uploadBuffer(indices, m_indexBuffer);
     }
@@ -506,18 +471,13 @@ private:
         bufferInfo.size = sizeof(drawCmd);
         bufferInfo.usage = vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst;
         
-        createBuffer(
-            bufferInfo,
-            vk::MemoryPropertyFlagBits::eDeviceLocal,
-            m_indirectBuffer,
-            m_indirectBufferMemory);
+		m_indirectBuffer = m_gfx.makeBuffer(bufferInfo, vk::MemoryPropertyFlagBits::eDeviceLocal);
 
         uploadBuffer(std::vector<vk::DrawIndexedIndirectCommand>{ drawCmd }, m_indirectBuffer);
 	}
 
     void createUniformBuffers() {
         m_uniformBuffers.clear();
-        m_uniformBuffersMemory.clear();
         m_uniformBuffersMapped.clear();
 
         vk::BufferCreateInfo bufferInfo{};
@@ -525,17 +485,13 @@ private:
         bufferInfo.usage = vk::BufferUsageFlagBits::eUniformBuffer;
 
         for (uint8_t i = 0; i < m_gfx.getMaxFramesInFlight(); i++) {
-            vk::raii::Buffer uniformBuffer = nullptr;
-            vk::raii::DeviceMemory uniformBufferMemory = nullptr;
-            createBuffer(
-                bufferInfo,
+            auto uniformBuffer = m_gfx.makeBuffer(bufferInfo,
                 vk::MemoryPropertyFlagBits::eHostVisible |
-                vk::MemoryPropertyFlagBits::eHostCoherent,
-                uniformBuffer,
-                uniformBufferMemory);
+                vk::MemoryPropertyFlagBits::eHostCoherent);
+            vk::raii::DeviceMemory uniformBufferMemory = nullptr;
+
+            m_uniformBuffersMapped.emplace_back(uniformBuffer.map());
             m_uniformBuffers.emplace_back(std::move(uniformBuffer));
-            m_uniformBuffersMemory.emplace_back(std::move(uniformBufferMemory));
-            m_uniformBuffersMapped.emplace_back(m_uniformBuffersMemory[i].mapMemory(0, bufferInfo.size));
         }
     }
 
@@ -544,11 +500,7 @@ private:
         bufferInfo.size = sizeof(StorageBufferObject);
         bufferInfo.usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst;
 
-        createBuffer(
-            bufferInfo,
-            vk::MemoryPropertyFlagBits::eDeviceLocal,
-            m_storageBuffer,
-            m_storageBufferMemory);
+		m_storageBuffer = m_gfx.makeBuffer(bufferInfo, vk::MemoryPropertyFlagBits::eDeviceLocal);
 
 		StorageBufferObject ssboData{};
 		ssboData.colour = glm::vec3(1.0f, 1.0f, 0.0f);
@@ -672,8 +624,8 @@ private:
             renderingInfo.pColorAttachments = &attachmentInfo;
 
             cmd.beginRendering(renderingInfo);
-            cmd.bindVertexBuffers(0, *m_vertexBuffer, { 0 });
-            cmd.bindIndexBuffer(*m_indexBuffer, 0, vk::IndexType::eUint32);
+            cmd.bindVertexBuffers(0, { m_vertexBuffer }, { 0 });
+            cmd.bindIndexBuffer(m_indexBuffer, 0, vk::IndexType::eUint32);
             cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, m_pipelineLayout, 0, *m_descriptorSets[imageIndex], nullptr);
 
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, m_graphicsPipeline);
@@ -681,7 +633,7 @@ private:
             cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
             cmd.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
 
-            cmd.drawIndexedIndirect(*m_indirectBuffer, 0, 1, static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand)));
+            cmd.drawIndexedIndirect(m_indirectBuffer, 0, 1, static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand)));
 
             cmd.endRendering();
         };

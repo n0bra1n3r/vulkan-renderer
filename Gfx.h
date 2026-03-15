@@ -5,6 +5,34 @@
 class Gfx
 {
 public:
+    class Buffer
+    {
+    private:
+		friend class Gfx;
+
+        Buffer(vk::raii::Buffer&& buffer, vk::raii::DeviceMemory&& bufferMemory, vk::DeviceSize size)
+			: m_buffer(std::move(buffer)), m_bufferMemory(std::move(bufferMemory)), m_size(size)
+        {}
+
+    public:
+		Buffer(nullptr_t) {}
+
+		Buffer() = delete;
+
+		operator vk::Buffer () const { return *m_buffer; }
+		vk::Buffer operator*() const { return *m_buffer; }
+
+		void* map() const { return m_bufferMemory.mapMemory(0, m_size); }
+		void unmap() const { m_bufferMemory.unmapMemory(); }
+
+    private:
+		vk::DeviceSize m_size = 0;
+        vk::raii::Buffer m_buffer = nullptr;
+		// TODO: replace with arena allocator
+        vk::raii::DeviceMemory m_bufferMemory = nullptr;
+    };
+
+public:
 	Gfx() = default;
     Gfx(const Gfx&) = delete;
 
@@ -19,6 +47,8 @@ public:
 	const vk::raii::ImageView& getSwapChainImageView(size_t index) const { return m_swapChainImageViews[index]; }
 	const vk::raii::CommandPool& getCommandPool() const { return m_commandPool; }
 	const std::unique_ptr<RenderGraph>& getRenderGraph() const { return m_renderGraph; }
+
+    Buffer makeBuffer(const vk::BufferCreateInfo& bufferInfo, vk::MemoryPropertyFlags memProperties);
 
 private:
 	void createInstance(const std::string& appName, const std::vector<const char*>& extensions);

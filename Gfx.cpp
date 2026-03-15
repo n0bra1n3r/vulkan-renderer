@@ -130,6 +130,18 @@ static vk::Extent2D chooseSwapExtent(void* window, const vk::SurfaceCapabilities
     };
 }
 
+static uint32_t findMemoryType(const vk::raii::PhysicalDevice& physicalDevice, uint32_t typeFilter, vk::MemoryPropertyFlags properties) {
+    auto memProperties = physicalDevice.getMemoryProperties();
+
+    for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+        if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+            return i;
+        }
+    }
+
+    throw std::runtime_error("failed to find suitable memory type!");
+}
+
 void Gfx::init(const std::string& appName, const std::vector<const char*>& extensions, void* window) {
     createInstance(appName, extensions);
     createSurface(window);
@@ -335,4 +347,21 @@ void Gfx::initRenderGraph()
 {
     // construct the render graph (holds references, does NOT copy objects)
     m_renderGraph.reset(new RenderGraph(m_device, m_swapChain, m_graphicsQueue, m_presentQueue, m_commandPool));
+}
+
+Gfx::Buffer Gfx::makeBuffer(const vk::BufferCreateInfo& bufferInfo, vk::MemoryPropertyFlags memProperties)
+{
+    vk::raii::Buffer buffer(m_device, bufferInfo);
+
+    auto memRequirements = buffer.getMemoryRequirements();
+
+    vk::MemoryAllocateInfo allocInfo{};
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = findMemoryType(m_physicalDevice, memRequirements.memoryTypeBits, memProperties);
+
+    vk::raii::DeviceMemory bufferMemory(m_device, allocInfo);
+
+    buffer.bindMemory(*bufferMemory, 0);
+
+    return Gfx::Buffer(std::move(buffer), std::move(bufferMemory), bufferInfo.size);
 }
