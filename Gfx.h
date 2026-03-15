@@ -5,32 +5,8 @@
 class Gfx
 {
 public:
-    class Buffer
-    {
-    private:
-		friend class Gfx;
-
-        Buffer(vk::raii::Buffer&& buffer, vk::raii::DeviceMemory&& bufferMemory, vk::DeviceSize size)
-			: m_buffer(std::move(buffer)), m_bufferMemory(std::move(bufferMemory)), m_size(size)
-        {}
-
-    public:
-		Buffer(nullptr_t) {}
-
-		Buffer() = delete;
-
-		operator vk::Buffer () const { return *m_buffer; }
-		vk::Buffer operator*() const { return *m_buffer; }
-
-		void* map() const { return m_bufferMemory.mapMemory(0, m_size); }
-		void unmap() const { m_bufferMemory.unmapMemory(); }
-
-    private:
-		vk::DeviceSize m_size = 0;
-        vk::raii::Buffer m_buffer = nullptr;
-		// TODO: replace with arena allocator
-        vk::raii::DeviceMemory m_bufferMemory = nullptr;
-    };
+    class Buffer;
+    class Image;
 
 public:
 	Gfx() = default;
@@ -50,6 +26,8 @@ public:
 
     Buffer makeBuffer(const vk::BufferCreateInfo& bufferInfo, vk::MemoryPropertyFlags memProperties);
     void updateBuffer(const Buffer& buffer, void* contentData, size_t contentSize);
+
+    Image makeImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryPropertyFlags properties);
 
     template<typename T>
     void updateBuffer(const Buffer& buffer, T data) {
@@ -90,4 +68,58 @@ private:
     vk::raii::CommandPool m_commandPool = nullptr;
 
     std::unique_ptr<RenderGraph> m_renderGraph = nullptr;
+
+public:
+    class Buffer
+    {
+    private:
+        friend class Gfx;
+
+        Buffer(vk::raii::Buffer&& buffer, vk::raii::DeviceMemory&& bufferMemory, vk::DeviceSize size)
+            : m_buffer(std::move(buffer)), m_bufferMemory(std::move(bufferMemory)), m_size(size)
+        {
+        }
+
+    public:
+        Buffer(nullptr_t) {}
+
+        Buffer() = delete;
+
+        operator vk::Buffer() const { return *m_buffer; }
+        vk::Buffer operator*() const { return *m_buffer; }
+
+        void* map() const { return m_bufferMemory.mapMemory(0, m_size); }
+        void unmap() const { m_bufferMemory.unmapMemory(); }
+
+    private:
+        vk::DeviceSize m_size = 0;
+        vk::raii::Buffer m_buffer = nullptr;
+        // TODO: replace with arena allocator
+        vk::raii::DeviceMemory m_bufferMemory = nullptr;
+    };
+
+    class Image
+    {
+    private:
+        friend class Gfx;
+
+        Image(vk::raii::Image&& image, vk::raii::DeviceMemory&& bufferMemory, vk::Extent3D extent)
+            : m_image(std::move(image)), m_bufferMemory(std::move(bufferMemory)), m_extent(extent)
+        {
+        }
+
+    public:
+        Image(nullptr_t) {}
+
+        Image() = delete;
+
+        operator vk::Image() const { return *m_image; }
+        vk::Image operator*() const { return *m_image; }
+
+    private:
+        vk::Extent3D m_extent{};
+        vk::raii::Image m_image = nullptr;
+        // TODO: replace with arena allocator
+        vk::raii::DeviceMemory m_bufferMemory = nullptr;
+    };
 };

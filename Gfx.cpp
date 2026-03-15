@@ -361,7 +361,7 @@ Gfx::Buffer Gfx::makeBuffer(const vk::BufferCreateInfo& bufferInfo, vk::MemoryPr
 
     vk::raii::DeviceMemory bufferMemory(m_device, allocInfo);
 
-    buffer.bindMemory(*bufferMemory, 0);
+    buffer.bindMemory(bufferMemory, 0);
 
     return Gfx::Buffer(std::move(buffer), std::move(bufferMemory), bufferInfo.size);
 }
@@ -399,4 +399,21 @@ void Gfx::updateBuffer(const Buffer& buffer, void* contentData, size_t contentSi
     // TODO: use a fence instead
     m_graphicsQueue.submit(submitInfo, nullptr);
     m_graphicsQueue.waitIdle();
+}
+
+Gfx::Image Gfx::makeImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryPropertyFlags properties)
+{
+    vk::raii::Image image(m_device, imageInfo);
+
+    auto memRequirements = image.getMemoryRequirements();
+
+    vk::MemoryAllocateInfo allocInfo{};
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = findMemoryType(m_physicalDevice, memRequirements.memoryTypeBits, properties);
+
+    vk::raii::DeviceMemory imageMemory(m_device, allocInfo);
+
+    image.bindMemory(imageMemory, 0);
+
+    return Gfx::Image(std::move(image), std::move(imageMemory), imageInfo.extent);
 }

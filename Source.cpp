@@ -90,8 +90,7 @@ private:
     vk::raii::DescriptorSetLayout m_descriptorSetLayout = nullptr;
     vk::raii::PipelineLayout m_pipelineLayout = nullptr;
     vk::raii::Pipeline m_graphicsPipeline = nullptr;
-    vk::raii::Image m_textureImage = nullptr;
-    vk::raii::DeviceMemory m_textureImageMemory = nullptr;
+    Gfx::Image m_textureImage = nullptr;
     vk::raii::ImageView m_textureImageView = nullptr;
     vk::raii::Sampler m_textureSampler = nullptr;
     Gfx::Buffer m_vertexBuffer = nullptr;
@@ -273,17 +272,7 @@ private:
         throw std::runtime_error("failed to find suitable memory type!");
     }
 
-    void createImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryPropertyFlags properties, vk::raii::Image& image, vk::raii::DeviceMemory& imageMemory) {
-        image = vk::raii::Image(m_gfx.getDevice(), imageInfo);
-        vk::MemoryRequirements memRequirements = image.getMemoryRequirements();
-        vk::MemoryAllocateInfo allocInfo{};
-        allocInfo.allocationSize = memRequirements.size;
-        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
-        imageMemory = vk::raii::DeviceMemory(m_gfx.getDevice(), allocInfo);
-        image.bindMemory(imageMemory, 0);
-    }
-
-    vk::raii::ImageView createImageView(vk::raii::Image& image, vk::Format format) {
+    vk::raii::ImageView createImageView(const Gfx::Image& image, vk::Format format) {
         vk::ImageViewCreateInfo viewInfo{};
         viewInfo.image = image;
         viewInfo.viewType = vk::ImageViewType::e2D;
@@ -293,7 +282,7 @@ private:
     }
 
     template<class T>
-    void uploadImage(const std::vector<T>& contents, uint32_t width, uint32_t height, const vk::raii::Image& image) {
+    void uploadImage(const std::vector<T>& contents, uint32_t width, uint32_t height, const Gfx::Image& image) {
         vk::BufferCreateInfo stagingInfo{};
         stagingInfo.size = sizeof(contents[0]) * contents.size();
         stagingInfo.usage = vk::BufferUsageFlagBits::eTransferSrc;
@@ -333,7 +322,7 @@ private:
         graphicsQueue.waitIdle();
     }
 
-    void transitionImageLayout(const vk::raii::CommandBuffer& commandBuffer, const vk::raii::Image& image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout) {
+    void transitionImageLayout(const vk::raii::CommandBuffer& commandBuffer, const Gfx::Image& image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout) {
         vk::ImageMemoryBarrier barrier{};
         barrier.oldLayout = oldLayout;
         barrier.newLayout = newLayout;
@@ -389,11 +378,7 @@ private:
         imageInfo.arrayLayers = 1;
         imageInfo.usage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled;
 
-        createImage(
-            imageInfo,
-            vk::MemoryPropertyFlagBits::eDeviceLocal,
-            m_textureImage,
-            m_textureImageMemory);
+		m_textureImage = m_gfx.makeImage(imageInfo, vk::MemoryPropertyFlagBits::eDeviceLocal);
 
 		uploadImage(imageBytes, texWidth, texHeight, m_textureImage);
     }
