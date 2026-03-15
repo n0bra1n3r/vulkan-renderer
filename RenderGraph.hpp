@@ -20,7 +20,7 @@ struct RenderPassNode
 
     // Record callback: receives RAII command buffer and acquired image index
     // The callback must record commands into the provided command buffer.
-    using RecordFunc = std::function<void(vk::raii::CommandBuffer&, uint32_t)>;
+    using RecordFunc = std::function<void(const vk::raii::CommandBuffer&, uint32_t)>;
     RecordFunc recordFunc;
 
     // Simple image-layout transition requirements for the primary color attachment used by the pass.
