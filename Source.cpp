@@ -272,15 +272,6 @@ private:
         throw std::runtime_error("failed to find suitable memory type!");
     }
 
-    vk::raii::ImageView createImageView(const Gfx::Image& image, vk::Format format) {
-        vk::ImageViewCreateInfo viewInfo{};
-        viewInfo.image = image;
-        viewInfo.viewType = vk::ImageViewType::e2D;
-        viewInfo.format = format;
-        viewInfo.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
-        return vk::raii::ImageView(m_gfx.getDevice(), viewInfo);
-    }
-
     void createTextureImage() {
         int texWidth, texHeight, texChannels;
         auto pixels = stbi_load("Textures/statue.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
@@ -308,7 +299,7 @@ private:
     }
 
     void createTextureImageView() {
-        m_textureImageView = createImageView(m_textureImage, vk::Format::eR8G8B8A8Srgb);
+        m_textureImageView = m_gfx.makeImageView(m_textureImage);
 
         vk::PhysicalDeviceProperties properties = m_gfx.getPhysicalDevice().getProperties();
         vk::SamplerCreateInfo samplerInfo{};

@@ -29,6 +29,7 @@ public:
 
     Image makeImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryPropertyFlags properties);
     void updateImage(const Gfx::Image& image, void* contentData, size_t contentSize);
+	vk::raii::ImageView makeImageView(const Image& image);
 
     template<typename T>
     void updateBuffer(const Buffer& buffer, T data) {
@@ -109,8 +110,8 @@ public:
     private:
         friend class Gfx;
 
-        Image(vk::raii::Image&& image, vk::raii::DeviceMemory&& bufferMemory, vk::Extent3D extent)
-			: m_image(std::move(image)), m_bufferMemory(std::move(bufferMemory)), m_extent(extent)
+        Image(vk::raii::Image&& image, vk::raii::DeviceMemory&& bufferMemory, vk::Extent3D extent, vk::Format format)
+			: m_image(std::move(image)), m_bufferMemory(std::move(bufferMemory)), m_extent(extent), m_format(format)
         {
         }
 
@@ -124,6 +125,7 @@ public:
 
     private:
         vk::Extent3D m_extent{};
+		vk::Format m_format{};
         vk::raii::Image m_image = nullptr;
         // TODO: replace with arena allocator
         vk::raii::DeviceMemory m_bufferMemory = nullptr;

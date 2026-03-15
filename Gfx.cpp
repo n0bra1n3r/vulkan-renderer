@@ -449,7 +449,7 @@ Gfx::Image Gfx::makeImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryProper
 
     image.bindMemory(imageMemory, 0);
 
-    return Gfx::Image(std::move(image), std::move(imageMemory), imageInfo.extent);
+    return Gfx::Image(std::move(image), std::move(imageMemory), imageInfo.extent, imageInfo.format);
 }
 
 void Gfx::updateImage(const Gfx::Image& image, void* contentData, size_t contentSize) {
@@ -489,4 +489,13 @@ void Gfx::updateImage(const Gfx::Image& image, void* contentData, size_t content
     // TODO: use a fence instead
     m_graphicsQueue.submit(submitInfo, nullptr);
     m_graphicsQueue.waitIdle();
+}
+
+vk::raii::ImageView Gfx::makeImageView(const Gfx::Image& image) {
+    vk::ImageViewCreateInfo viewInfo{};
+    viewInfo.image = image;
+    viewInfo.viewType = vk::ImageViewType::e2D;
+    viewInfo.format = image.m_format;
+    viewInfo.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
+    return vk::raii::ImageView(m_device, viewInfo);
 }
