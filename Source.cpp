@@ -26,7 +26,7 @@ const uint32_t HEIGHT = 600;
 
 struct Vertex
 {
-    glm::vec2 position;
+    glm::vec3 position;
     glm::vec2 texCoord;
 
     static vk::VertexInputBindingDescription getBindingDescription() {
@@ -38,31 +38,70 @@ struct Vertex
 
     static std::array<vk::VertexInputAttributeDescription, 2> getAttributeDescriptions() {
         return {
-            vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, position)),
+            vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, position)),
             vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, texCoord))
         };
     }
 };
 
-const std::vector<Vertex> vertices =
+struct Shape
 {
-    {{-0.5, -0.5}, {1.0, 0.0}},
-    {{0.5, -0.5}, {0.0, 0.0}},
-    {{0.5, 0.5}, {0.0, 1.0}},
-    {{-0.5, 0.5}, {1.0, 1.0}}
+    vk::DrawIndexedIndirectCommand drawCmd;
 };
 
-const std::vector<uint32_t> indices =
+struct Cube : public Shape
 {
-    0, 1, 2, 2, 3, 0
-};
+    static std::vector<Vertex> getVertices() {
+        return {
+            // Front face (z = +0.5)
+            {{-0.5f, -0.5f,  0.5f}, {1.0f, 0.0f}},
+            {{ 0.5f, -0.5f,  0.5f}, {0.0f, 0.0f}},
+            {{ 0.5f,  0.5f,  0.5f}, {0.0f, 1.0f}},
+            {{-0.5f,  0.5f,  0.5f}, {1.0f, 1.0f}},
+            // Back face (z = -0.5)
+            {{ 0.5f, -0.5f, -0.5f}, {1.0f, 0.0f}},
+            {{-0.5f, -0.5f, -0.5f}, {0.0f, 0.0f}},
+            {{-0.5f,  0.5f, -0.5f}, {0.0f, 1.0f}},
+            {{ 0.5f,  0.5f, -0.5f}, {1.0f, 1.0f}},
+            // Left face (x = -0.5)
+            {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f}},
+            {{-0.5f, -0.5f,  0.5f}, {0.0f, 0.0f}},
+            {{-0.5f,  0.5f,  0.5f}, {0.0f, 1.0f}},
+            {{-0.5f,  0.5f, -0.5f}, {1.0f, 1.0f}},
+            // Right face (x = +0.5)
+            {{ 0.5f, -0.5f,  0.5f}, {1.0f, 0.0f}},
+            {{ 0.5f, -0.5f, -0.5f}, {0.0f, 0.0f}},
+            {{ 0.5f,  0.5f, -0.5f}, {0.0f, 1.0f}},
+            {{ 0.5f,  0.5f,  0.5f}, {1.0f, 1.0f}},
+            // Top face (y = +0.5)
+            {{-0.5f,  0.5f,  0.5f}, {1.0f, 0.0f}},
+            {{ 0.5f,  0.5f,  0.5f}, {0.0f, 0.0f}},
+            {{ 0.5f,  0.5f, -0.5f}, {0.0f, 1.0f}},
+            {{-0.5f,  0.5f, -0.5f}, {1.0f, 1.0f}},
+            // Bottom face (y = -0.5)
+            {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f}},
+            {{ 0.5f, -0.5f, -0.5f}, {0.0f, 0.0f}},
+            {{ 0.5f, -0.5f,  0.5f}, {0.0f, 1.0f}},
+            {{-0.5f, -0.5f,  0.5f}, {1.0f, 1.0f}},
+        };
+    }
 
-const vk::DrawIndexedIndirectCommand drawCmd = {
-    static_cast<uint32_t>(indices.size()), // indexCount
-    1, // instanceCount
-    0, // firstIndex
-    0, // vertexOffset
-    0  // firstInstance
+    static std::vector<uint32_t> getIndices() {
+        return {
+            // Front
+            0, 1, 2, 2, 3, 0,
+            // Back
+            4, 5, 6, 6, 7, 4,
+            // Left
+            8, 9, 10, 10, 11, 8,
+            // Right
+            12, 13, 14, 14, 15, 12,
+            // Top
+            16, 17, 18, 18, 19, 16,
+            // Bottom
+            20, 21, 22, 22, 23, 20
+        };
+    }
 };
 
 struct UniformBufferObject
@@ -316,6 +355,8 @@ private:
     }
 
     void createVertexBuffer() {
+		auto vertices = Cube::getVertices();
+
         vk::BufferCreateInfo bufferInfo{};
         bufferInfo.size = sizeof(vertices[0]) * vertices.size();
         bufferInfo.usage = vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst;
@@ -325,6 +366,8 @@ private:
 	}
 
     void createIndexBuffer() {
+		auto indices = Cube::getIndices();
+
         vk::BufferCreateInfo bufferInfo{};
         bufferInfo.size = sizeof(indices[0]) * indices.size();
         bufferInfo.usage = vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst;
@@ -334,6 +377,16 @@ private:
     }
 
     void createIndirectBuffer() {
+        auto indices = Cube::getIndices();
+
+        const vk::DrawIndexedIndirectCommand drawCmd = {
+            static_cast<uint32_t>(indices.size()), // indexCount
+            1, // instanceCount
+            0, // firstIndex
+            0, // vertexOffset
+            0  // firstInstance
+        };
+
         vk::BufferCreateInfo bufferInfo{};
         bufferInfo.size = sizeof(drawCmd);
         bufferInfo.usage = vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst;

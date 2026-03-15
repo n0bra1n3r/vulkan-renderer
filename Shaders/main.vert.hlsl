@@ -1,6 +1,6 @@
 struct VertexInput
 {
-    float2 position : ATTRIB0;
+    float3 position : ATTRIB0;
     float2 texCoord : ATTRIB1;
 };
 
@@ -30,7 +30,7 @@ StructuredBuffer<StorageBuffer> ssbo : register(t1, space0);
 VertexOutput main(VertexInput input)
 {
     VertexOutput output;
-    output.sv_position = mul(ubo.proj, mul(ubo.view, mul(ubo.model, float4(input.position, 0.0, 1.0))));
+    output.sv_position = mul(ubo.proj, mul(ubo.view, mul(ubo.model, float4(input.position, 1.0))));
     output.colour = ssbo[0].colour;
     output.texCoord = input.texCoord;
     return output;
