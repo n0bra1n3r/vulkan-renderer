@@ -4,20 +4,6 @@
 // - Manages per-frame semaphores and fences
 // - Demonstrates image layout transitions using synchronization2 (pipelineBarrier2 / ImageMemoryBarrier2)
 // - Provides a minimal "pass" API: each pass supplies a record callback that is called with the per-frame command buffer
-//
-// Usage sketch:
-//   RenderGraph rg(device, swapChain, graphicsQueue, presentQueue, commandPool, swapChainImageViews, swapChainExtent);
-//   rg.addPass("GeometryPass", [](vk::raii::CommandBuffer &cmd, uint32_t imageIndex){ /* record drawing */ }, 
-//              /*transition*/ vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal,
-//              /*src/dst access/stage*/ {}, vk::AccessFlagBits2::eColorAttachmentWrite,
-//              vk::PipelineStageFlagBits2::eTopOfPipe, vk::PipelineStageFlagBits2::eColorAttachmentOutput);
-//   rg.init(); // allocates command buffers and sync objects
-//   // each frame:
-//     rg.executeFrame();
-//
-//
-// Note: this code focuses on synchronization and orchestration. It intentionally avoids higher-level resource/lifetime
-// management (frame graphs with automatic aliasing, barriers across many resources, queue ownership transfers, etc.).
 
 #pragma once
 
@@ -52,7 +38,6 @@ struct RenderPassNode
 class RenderGraph
 {
 public:
-    // Construct with references to objects managed elsewhere (HelloTriangleApplication keeps lifetime)
     RenderGraph(vk::raii::Device& device,
                 vk::raii::SwapchainKHR& swapchain,
                 vk::raii::Queue& graphicsQueue,
@@ -64,7 +49,6 @@ public:
           m_presentQueue(presentQueue),
           m_commandPool(commandPool)
     {
-        // cache images
         m_swapchainImages = m_swapchain.getImages();
     }
 
@@ -132,7 +116,7 @@ public:
         cmd.begin(vk::CommandBufferBeginInfo{ vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
 
         // For each pass, optionally insert an image layout transition, then call the user record callback.
-        // We assume all passes render to the swapchain color image directly in this simple sample.
+        // We assume all passes render to the swapchain color image directly.
         for (auto const& pass : m_passes)
         {
             // If requested, issue an ImageMemoryBarrier2 via pipelineBarrier2 (synchronization2)
@@ -156,7 +140,6 @@ public:
                 dependencyInfo.imageMemoryBarrierCount = 1;
                 dependencyInfo.pImageMemoryBarriers = &barrier;
 
-                // pipelineBarrier2 is part of synchronization2; it provides a clearer model for students too.
                 cmd.pipelineBarrier2(dependencyInfo);
             }
 
@@ -168,7 +151,6 @@ public:
 
         cmd.end();
 
-        // reset the fence to unsignaled before submit
         m_device.resetFences(*inFlightFence);
 
         // Submit: wait on presentComplete, signal renderFinished
@@ -206,16 +188,9 @@ private:
     vk::raii::Queue& m_presentQueue;
     vk::raii::CommandPool& m_commandPool;
 
-    // swapchain images (VkImage handles) used for transitions
     std::vector<vk::Image> m_swapchainImages;
-
-    // recorded passes
     std::vector<RenderPassNode> m_passes;
-
-    // per-swapchain-image command buffers (RAII)
     std::vector<vk::raii::CommandBuffer> m_commandBuffers;
-
-    // per-frame synchronization objects
     std::vector<vk::raii::Semaphore> m_presentCompleteSemaphores;
     std::vector<vk::raii::Semaphore> m_renderFinishedSemaphores;
     std::vector<vk::raii::Fence> m_inFlightFences;

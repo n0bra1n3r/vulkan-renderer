@@ -604,8 +604,6 @@ private:
         poolInfo.queueFamilyIndex = graphicsFamily;
 
         commandPool = vk::raii::CommandPool(device, poolInfo);
-
-        // keep old single-command allocation removed: render graph will allocate per-image command buffers
     }
 
     uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) {
@@ -969,7 +967,6 @@ private:
         }
     }
 
-    // New: create and initialize the RenderGraph and add the passes used by the app
     void initRenderGraph()
     {
         // construct the render graph (holds references, does NOT copy objects)
