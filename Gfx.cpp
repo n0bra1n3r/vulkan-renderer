@@ -156,7 +156,7 @@ void Gfx::createInstance(const std::string& appName, const std::vector<const cha
     }
 
     // Check if the required layers are supported by the Vulkan implementation.
-    auto layerProperties = context.enumerateInstanceLayerProperties();
+    auto layerProperties = m_context.enumerateInstanceLayerProperties();
     if (std::any_of(requiredLayers.begin(), requiredLayers.end(),
         [&layerProperties](auto const& requiredLayer)
         {
@@ -171,7 +171,7 @@ void Gfx::createInstance(const std::string& appName, const std::vector<const cha
     }
 
     // Check if the required GLFW extensions are supported by the Vulkan implementation.
-    auto extensionProperties = context.enumerateInstanceExtensionProperties();
+    auto extensionProperties = m_context.enumerateInstanceExtensionProperties();
     for (size_t i = 0; i < extensions.size(); ++i)
     {
         auto extension = extensions[i];
@@ -192,7 +192,7 @@ void Gfx::createInstance(const std::string& appName, const std::vector<const cha
     createInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
     createInfo.ppEnabledExtensionNames = extensions.data();
 
-    instance = vk::raii::Instance(context, createInfo);
+    m_instance = vk::raii::Instance(m_context, createInfo);
 }
 
 void Gfx::createSurface(void* window) {
@@ -201,11 +201,11 @@ void Gfx::createSurface(void* window) {
     createInfo.hwnd = static_cast<HWND>(window);
     createInfo.hinstance = GetModuleHandle(nullptr);
 
-    surface = vk::raii::SurfaceKHR(instance, createInfo);
+    m_surface = vk::raii::SurfaceKHR(m_instance, createInfo);
 }
 
 void Gfx::pickPhysicalDevice() {
-    auto devices = instance.enumeratePhysicalDevices();
+    auto devices = m_instance.enumeratePhysicalDevices();
     const auto devIter = std::find_if(devices.begin(), devices.end(),
         [&](auto const& device)
         {
@@ -229,7 +229,7 @@ void Gfx::pickPhysicalDevice() {
             }
             isSuitable = isSuitable && found;
             if (isSuitable) {
-                physicalDevice = device;
+                m_physicalDevice = device;
             }
             return isSuitable;
         });
@@ -239,11 +239,11 @@ void Gfx::pickPhysicalDevice() {
 }
 
 void Gfx::createLogicalDevice() {
-    std::tie(graphicsFamily, presentFamily) = findQueueFamilies(physicalDevice, surface);
+    std::tie(m_graphicsFamily, m_presentFamily) = findQueueFamilies(m_physicalDevice, m_surface);
     auto queuePriority = 0.0f;
 
     vk::DeviceQueueCreateInfo deviceQueueCreateInfo{};
-    deviceQueueCreateInfo.queueFamilyIndex = graphicsFamily;
+    deviceQueueCreateInfo.queueFamilyIndex = m_graphicsFamily;
     deviceQueueCreateInfo.queueCount = 1;
     deviceQueueCreateInfo.pQueuePriorities = &queuePriority;
 
@@ -269,70 +269,70 @@ void Gfx::createLogicalDevice() {
     deviceCreateInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
     deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
-    device = vk::raii::Device(physicalDevice, deviceCreateInfo);
-    graphicsQueue = vk::raii::Queue(device, graphicsFamily, 0);
-    presentQueue = vk::raii::Queue(device, presentFamily, 0);
+    m_device = vk::raii::Device(m_physicalDevice, deviceCreateInfo);
+    m_graphicsQueue = vk::raii::Queue(m_device, m_graphicsFamily, 0);
+    m_presentQueue = vk::raii::Queue(m_device, m_presentFamily, 0);
 }
 
 void Gfx::createSwapChain(void* window) {
-    auto surfaceCapabilities = physicalDevice.getSurfaceCapabilitiesKHR(surface);
-    auto availableFormats = physicalDevice.getSurfaceFormatsKHR(surface);
-    auto availablePresentModes = physicalDevice.getSurfacePresentModesKHR(surface);
+    auto surfaceCapabilities = m_physicalDevice.getSurfaceCapabilitiesKHR(m_surface);
+    auto availableFormats = m_physicalDevice.getSurfaceFormatsKHR(m_surface);
+    auto availablePresentModes = m_physicalDevice.getSurfacePresentModesKHR(m_surface);
 
-    swapChainSurfaceFormat = chooseSwapSurfaceFormat(availableFormats);
-    swapChainExtent = chooseSwapExtent(window, surfaceCapabilities);
+    m_swapChainSurfaceFormat = chooseSwapSurfaceFormat(availableFormats);
+    m_swapChainExtent = chooseSwapExtent(window, surfaceCapabilities);
 
     vk::SwapchainCreateInfoKHR swapChainCreateInfo{};
     swapChainCreateInfo.flags = vk::SwapchainCreateFlagsKHR();
-    swapChainCreateInfo.surface = surface;
+    swapChainCreateInfo.surface = m_surface;
     swapChainCreateInfo.minImageCount = chooseSwapMinImageCount(surfaceCapabilities);
-    swapChainCreateInfo.imageFormat = swapChainSurfaceFormat.format;
-    swapChainCreateInfo.imageColorSpace = swapChainSurfaceFormat.colorSpace;
-    swapChainCreateInfo.imageExtent = swapChainExtent;
+    swapChainCreateInfo.imageFormat = m_swapChainSurfaceFormat.format;
+    swapChainCreateInfo.imageColorSpace = m_swapChainSurfaceFormat.colorSpace;
+    swapChainCreateInfo.imageExtent = m_swapChainExtent;
     swapChainCreateInfo.imageArrayLayers = 1; // keep 1 unless rendering for VR
     swapChainCreateInfo.imageUsage = vk::ImageUsageFlagBits::eColorAttachment; // we are rendering to image directly
     swapChainCreateInfo.preTransform = surfaceCapabilities.currentTransform;  // don't apply further transformation
     swapChainCreateInfo.presentMode = chooseSwapPresentMode(availablePresentModes);
     swapChainCreateInfo.clipped = true;  // don't update the pixels that are obscured
 
-    uint32_t queueFamilyIndices[] = { graphicsFamily, presentFamily };
+    uint32_t queueFamilyIndices[] = { m_graphicsFamily, m_presentFamily };
 
-    if (graphicsFamily != presentFamily) {
+    if (m_graphicsFamily != m_presentFamily) {
         swapChainCreateInfo.imageSharingMode = vk::SharingMode::eConcurrent;
         swapChainCreateInfo.queueFamilyIndexCount = 2;
         swapChainCreateInfo.pQueueFamilyIndices = queueFamilyIndices;
     }
 
-    swapChain = vk::raii::SwapchainKHR(device, swapChainCreateInfo);
-    swapChainImages = swapChain.getImages();
-	maxFramesInFlight = static_cast<uint8_t>(swapChainImages.size());
+    m_swapChain = vk::raii::SwapchainKHR(m_device, swapChainCreateInfo);
+    m_swapChainImages = m_swapChain.getImages();
+	m_maxFramesInFlight = static_cast<uint8_t>(m_swapChainImages.size());
 }
 
 void Gfx::createImageViews() {
     vk::ImageViewCreateInfo imageViewCreateInfo{};
     imageViewCreateInfo.viewType = vk::ImageViewType::e2D;
-    imageViewCreateInfo.format = swapChainSurfaceFormat.format;
+    imageViewCreateInfo.format = m_swapChainSurfaceFormat.format;
     imageViewCreateInfo.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
     imageViewCreateInfo.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
     imageViewCreateInfo.subresourceRange.levelCount = 1;
     imageViewCreateInfo.subresourceRange.layerCount = 1;
 
-    for (auto image : swapChainImages) {
+    for (auto image : m_swapChainImages) {
         imageViewCreateInfo.image = image;
-        swapChainImageViews.emplace_back(device, imageViewCreateInfo);
+        m_swapChainImageViews.emplace_back(m_device, imageViewCreateInfo);
     }
 }
 
 void Gfx::createCommandPool() {
     vk::CommandPoolCreateInfo poolInfo{};
     poolInfo.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
-    poolInfo.queueFamilyIndex = graphicsFamily;
+    poolInfo.queueFamilyIndex = m_graphicsFamily;
 
-    commandPool = vk::raii::CommandPool(device, poolInfo);
+    m_commandPool = vk::raii::CommandPool(m_device, poolInfo);
 }
 
 void Gfx::initRenderGraph()
 {
     // construct the render graph (holds references, does NOT copy objects)
-    renderGraph.reset(new RenderGraph(device, swapChain, graphicsQueue, presentQueue, commandPool));
+    m_renderGraph.reset(new RenderGraph(m_device, m_swapChain, m_graphicsQueue, m_presentQueue, m_commandPool));
 }

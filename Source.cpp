@@ -84,29 +84,29 @@ public:
     }
 
 private:
-    GLFWwindow* window = nullptr;
-	Gfx gfx;
+    GLFWwindow* m_window = nullptr;
+	Gfx m_gfx;
 
-    vk::raii::DescriptorSetLayout descriptorSetLayout = nullptr;
-    vk::raii::PipelineLayout pipelineLayout = nullptr;
-    vk::raii::Pipeline graphicsPipeline = nullptr;
-    vk::raii::Image textureImage = nullptr;
-    vk::raii::DeviceMemory textureImageMemory = nullptr;
-    vk::raii::ImageView textureImageView = nullptr;
-    vk::raii::Sampler textureSampler = nullptr;
-    vk::raii::Buffer vertexBuffer = nullptr;
-    vk::raii::DeviceMemory vertexBufferMemory = nullptr;
-    vk::raii::Buffer indexBuffer = nullptr;
-    vk::raii::DeviceMemory indexBufferMemory = nullptr;
-    vk::raii::Buffer indirectBuffer = nullptr;
-    vk::raii::DeviceMemory indirectBufferMemory = nullptr;
-    vk::raii::Buffer storageBuffer = nullptr;
-    vk::raii::DeviceMemory storageBufferMemory = nullptr;
-    std::vector<vk::raii::Buffer> uniformBuffers;
-    std::vector<vk::raii::DeviceMemory> uniformBuffersMemory;
-    std::vector<void*> uniformBuffersMapped;
-    vk::raii::DescriptorPool descriptorPool = nullptr;
-    std::vector<vk::raii::DescriptorSet> descriptorSets;
+    vk::raii::DescriptorSetLayout m_descriptorSetLayout = nullptr;
+    vk::raii::PipelineLayout m_pipelineLayout = nullptr;
+    vk::raii::Pipeline m_graphicsPipeline = nullptr;
+    vk::raii::Image m_textureImage = nullptr;
+    vk::raii::DeviceMemory m_textureImageMemory = nullptr;
+    vk::raii::ImageView m_textureImageView = nullptr;
+    vk::raii::Sampler m_textureSampler = nullptr;
+    vk::raii::Buffer m_vertexBuffer = nullptr;
+    vk::raii::DeviceMemory m_vertexBufferMemory = nullptr;
+    vk::raii::Buffer m_indexBuffer = nullptr;
+    vk::raii::DeviceMemory m_indexBufferMemory = nullptr;
+    vk::raii::Buffer m_indirectBuffer = nullptr;
+    vk::raii::DeviceMemory m_indirectBufferMemory = nullptr;
+    vk::raii::Buffer m_storageBuffer = nullptr;
+    vk::raii::DeviceMemory m_storageBufferMemory = nullptr;
+    std::vector<vk::raii::Buffer> m_uniformBuffers;
+    std::vector<vk::raii::DeviceMemory> m_uniformBuffersMemory;
+    std::vector<void*> m_uniformBuffersMapped;
+    vk::raii::DescriptorPool m_descriptorPool = nullptr;
+    std::vector<vk::raii::DescriptorSet> m_descriptorSets;
 
     void initWindow() {
         glfwInit();
@@ -114,11 +114,11 @@ private:
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
-        window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
+        m_window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
     }
 
     void initVulkan() {
-		gfx.init("Vulkan App", getRequiredExtensions(), glfwGetWin32Window(window));
+		m_gfx.init("Vulkan App", getRequiredExtensions(), glfwGetWin32Window(m_window));
 
         createDescriptorSetLayout();
         createGraphicsPipeline();
@@ -152,7 +152,7 @@ private:
         layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
         layoutInfo.pBindings = bindings.data();
 
-        descriptorSetLayout = vk::raii::DescriptorSetLayout(gfx.getDevice(), layoutInfo);
+        m_descriptorSetLayout = vk::raii::DescriptorSetLayout(m_gfx.getDevice(), layoutInfo);
     }
 
     static std::vector<char> readFile(const std::string& filename) {
@@ -176,11 +176,11 @@ private:
         createInfo.codeSize = code.size() * sizeof(char);
         createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
 
-        return vk::raii::ShaderModule{ gfx.getDevice(), createInfo};
+        return vk::raii::ShaderModule{ m_gfx.getDevice(), createInfo};
     }
 
     void createGraphicsPipeline() {
-		auto surfaceFormat = gfx.getSwapChainSurfaceFormat();
+		auto surfaceFormat = m_gfx.getSwapChainSurfaceFormat();
 
         vk::PipelineRenderingCreateInfo pipelineRenderingCreateInfo{};
         pipelineRenderingCreateInfo.colorAttachmentCount = 1;
@@ -246,9 +246,9 @@ private:
 
         vk::PipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.setLayoutCount = 1;
-        pipelineLayoutInfo.pSetLayouts = &*descriptorSetLayout;
+        pipelineLayoutInfo.pSetLayouts = &*m_descriptorSetLayout;
 
-        pipelineLayout = vk::raii::PipelineLayout(gfx.getDevice(), pipelineLayoutInfo);
+        m_pipelineLayout = vk::raii::PipelineLayout(m_gfx.getDevice(), pipelineLayoutInfo);
 
         vk::GraphicsPipelineCreateInfo pipelineInfo{};
         pipelineInfo.pNext = &pipelineRenderingCreateInfo;
@@ -261,13 +261,13 @@ private:
         pipelineInfo.pRasterizationState = &rasterizer;
         pipelineInfo.pMultisampleState = &multisampling;
         pipelineInfo.pColorBlendState = &colorBlending;
-        pipelineInfo.layout = pipelineLayout;
+        pipelineInfo.layout = m_pipelineLayout;
 
-        graphicsPipeline = vk::raii::Pipeline(gfx.getDevice(), nullptr, pipelineInfo);
+        m_graphicsPipeline = vk::raii::Pipeline(m_gfx.getDevice(), nullptr, pipelineInfo);
     }
 
     uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) {
-        auto memProperties = gfx.getPhysicalDevice().getMemoryProperties();
+        auto memProperties = m_gfx.getPhysicalDevice().getMemoryProperties();
 
         for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
             if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
@@ -279,22 +279,22 @@ private:
     }
 
     void createBuffer(const vk::BufferCreateInfo& bufferInfo, const vk::MemoryPropertyFlags& properties, vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory) {
-        buffer = vk::raii::Buffer(gfx.getDevice(), bufferInfo);
+        buffer = vk::raii::Buffer(m_gfx.getDevice(), bufferInfo);
         vk::MemoryRequirements memRequirements = buffer.getMemoryRequirements();
         vk::MemoryAllocateInfo allocInfo{};
         allocInfo.allocationSize = memRequirements.size;
         allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
-        bufferMemory = vk::raii::DeviceMemory(gfx.getDevice(), allocInfo);
+        bufferMemory = vk::raii::DeviceMemory(m_gfx.getDevice(), allocInfo);
         buffer.bindMemory(*bufferMemory, 0);
     }
 
     void createImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryPropertyFlags properties, vk::raii::Image& image, vk::raii::DeviceMemory& imageMemory) {
-        image = vk::raii::Image(gfx.getDevice(), imageInfo);
+        image = vk::raii::Image(m_gfx.getDevice(), imageInfo);
         vk::MemoryRequirements memRequirements = image.getMemoryRequirements();
         vk::MemoryAllocateInfo allocInfo{};
         allocInfo.allocationSize = memRequirements.size;
         allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
-        imageMemory = vk::raii::DeviceMemory(gfx.getDevice(), allocInfo);
+        imageMemory = vk::raii::DeviceMemory(m_gfx.getDevice(), allocInfo);
         image.bindMemory(imageMemory, 0);
     }
 
@@ -304,7 +304,7 @@ private:
         viewInfo.viewType = vk::ImageViewType::e2D;
         viewInfo.format = format;
         viewInfo.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
-        return vk::raii::ImageView(gfx.getDevice(), viewInfo);
+        return vk::raii::ImageView(m_gfx.getDevice(), viewInfo);
     }
 
     template<class T>
@@ -328,11 +328,11 @@ private:
         stagingBufferMemory.unmapMemory();
 
         vk::CommandBufferAllocateInfo allocInfo{};
-        allocInfo.commandPool = gfx.getCommandPool();
+        allocInfo.commandPool = m_gfx.getCommandPool();
         allocInfo.level = vk::CommandBufferLevel::ePrimary;
         allocInfo.commandBufferCount = 1;
 
-        auto commandCopyBuffer = std::move(gfx.getDevice().allocateCommandBuffers(allocInfo).front());
+        auto commandCopyBuffer = std::move(m_gfx.getDevice().allocateCommandBuffers(allocInfo).front());
         commandCopyBuffer.begin({ vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
         commandCopyBuffer.copyBuffer(stagingBuffer, buffer, vk::BufferCopy(0, 0, stagingInfo.size));
         commandCopyBuffer.end();
@@ -341,7 +341,7 @@ private:
 		submitInfo.commandBufferCount = 1;
 		submitInfo.pCommandBuffers = &*commandCopyBuffer;
 
-		auto graphicsQueue = gfx.getGraphicsQueue();
+		auto graphicsQueue = m_gfx.getGraphicsQueue();
 
         graphicsQueue.submit(submitInfo, nullptr);
         graphicsQueue.waitIdle();
@@ -368,11 +368,11 @@ private:
         stagingBufferMemory.unmapMemory();
 
         vk::CommandBufferAllocateInfo allocInfo{};
-        allocInfo.commandPool = gfx.getCommandPool();
+        allocInfo.commandPool = m_gfx.getCommandPool();
         allocInfo.level = vk::CommandBufferLevel::ePrimary;
         allocInfo.commandBufferCount = 1;
 
-        auto commandCopyBuffer = std::move(gfx.getDevice().allocateCommandBuffers(allocInfo).front());
+        auto commandCopyBuffer = std::move(m_gfx.getDevice().allocateCommandBuffers(allocInfo).front());
         commandCopyBuffer.begin({ vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
 		transitionImageLayout(commandCopyBuffer, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
         vk::BufferImageCopy region{};
@@ -388,7 +388,7 @@ private:
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &*commandCopyBuffer;
 
-        auto graphicsQueue = gfx.getGraphicsQueue();
+        auto graphicsQueue = m_gfx.getGraphicsQueue();
 
         graphicsQueue.submit(submitInfo, nullptr);
         graphicsQueue.waitIdle();
@@ -453,16 +453,16 @@ private:
         createImage(
             imageInfo,
             vk::MemoryPropertyFlagBits::eDeviceLocal,
-            textureImage,
-            textureImageMemory);
+            m_textureImage,
+            m_textureImageMemory);
 
-		uploadImage(imageBytes, texWidth, texHeight, textureImage);
+		uploadImage(imageBytes, texWidth, texHeight, m_textureImage);
     }
 
     void createTextureImageView() {
-        textureImageView = createImageView(textureImage, vk::Format::eR8G8B8A8Srgb);
+        m_textureImageView = createImageView(m_textureImage, vk::Format::eR8G8B8A8Srgb);
 
-        vk::PhysicalDeviceProperties properties = gfx.getPhysicalDevice().getProperties();
+        vk::PhysicalDeviceProperties properties = m_gfx.getPhysicalDevice().getProperties();
         vk::SamplerCreateInfo samplerInfo{};
         samplerInfo.magFilter = vk::Filter::eLinear;
         samplerInfo.minFilter = vk::Filter::eLinear;
@@ -470,7 +470,7 @@ private:
         samplerInfo.anisotropyEnable = true;
         samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
 
-        textureSampler = vk::raii::Sampler(gfx.getDevice(), samplerInfo);
+        m_textureSampler = vk::raii::Sampler(m_gfx.getDevice(), samplerInfo);
     }
 
     void createVertexBuffer() {
@@ -481,10 +481,10 @@ private:
         createBuffer(
             bufferInfo, 
             vk::MemoryPropertyFlagBits::eDeviceLocal, 
-            vertexBuffer, 
-            vertexBufferMemory);
+            m_vertexBuffer, 
+            m_vertexBufferMemory);
 
-		uploadBuffer(vertices, vertexBuffer);
+		uploadBuffer(vertices, m_vertexBuffer);
 	}
 
     void createIndexBuffer() {
@@ -495,10 +495,10 @@ private:
         createBuffer(
             bufferInfo,
             vk::MemoryPropertyFlagBits::eDeviceLocal,
-            indexBuffer,
-            indexBufferMemory);
+            m_indexBuffer,
+            m_indexBufferMemory);
 
-		uploadBuffer(indices, indexBuffer);
+		uploadBuffer(indices, m_indexBuffer);
     }
 
     void createIndirectBuffer() {
@@ -509,22 +509,22 @@ private:
         createBuffer(
             bufferInfo,
             vk::MemoryPropertyFlagBits::eDeviceLocal,
-            indirectBuffer,
-            indirectBufferMemory);
+            m_indirectBuffer,
+            m_indirectBufferMemory);
 
-        uploadBuffer(std::vector<vk::DrawIndexedIndirectCommand>{ drawCmd }, indirectBuffer);
+        uploadBuffer(std::vector<vk::DrawIndexedIndirectCommand>{ drawCmd }, m_indirectBuffer);
 	}
 
     void createUniformBuffers() {
-        uniformBuffers.clear();
-        uniformBuffersMemory.clear();
-        uniformBuffersMapped.clear();
+        m_uniformBuffers.clear();
+        m_uniformBuffersMemory.clear();
+        m_uniformBuffersMapped.clear();
 
         vk::BufferCreateInfo bufferInfo{};
         bufferInfo.size = sizeof(UniformBufferObject);
         bufferInfo.usage = vk::BufferUsageFlagBits::eUniformBuffer;
 
-        for (uint8_t i = 0; i < gfx.getMaxFramesInFlight(); i++) {
+        for (uint8_t i = 0; i < m_gfx.getMaxFramesInFlight(); i++) {
             vk::raii::Buffer uniformBuffer = nullptr;
             vk::raii::DeviceMemory uniformBufferMemory = nullptr;
             createBuffer(
@@ -533,9 +533,9 @@ private:
                 vk::MemoryPropertyFlagBits::eHostCoherent,
                 uniformBuffer,
                 uniformBufferMemory);
-            uniformBuffers.emplace_back(std::move(uniformBuffer));
-            uniformBuffersMemory.emplace_back(std::move(uniformBufferMemory));
-            uniformBuffersMapped.emplace_back(uniformBuffersMemory[i].mapMemory(0, bufferInfo.size));
+            m_uniformBuffers.emplace_back(std::move(uniformBuffer));
+            m_uniformBuffersMemory.emplace_back(std::move(uniformBufferMemory));
+            m_uniformBuffersMapped.emplace_back(m_uniformBuffersMemory[i].mapMemory(0, bufferInfo.size));
         }
     }
 
@@ -547,17 +547,17 @@ private:
         createBuffer(
             bufferInfo,
             vk::MemoryPropertyFlagBits::eDeviceLocal,
-            storageBuffer,
-            storageBufferMemory);
+            m_storageBuffer,
+            m_storageBufferMemory);
 
 		StorageBufferObject ssboData{};
 		ssboData.colour = glm::vec3(1.0f, 1.0f, 0.0f);
 
-        uploadBuffer(std::vector<StorageBufferObject>{ssboData}, storageBuffer);
+        uploadBuffer(std::vector<StorageBufferObject>{ssboData}, m_storageBuffer);
     }
 
     void createDescriptorPool() {
-		auto maxFramesInFlight = gfx.getMaxFramesInFlight();
+		auto maxFramesInFlight = m_gfx.getMaxFramesInFlight();
 
         std::array<vk::DescriptorPoolSize, 3> poolSizes = {
             vk::DescriptorPoolSize{ vk::DescriptorType::eUniformBuffer, maxFramesInFlight },
@@ -571,74 +571,74 @@ private:
         poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
         poolInfo.pPoolSizes = poolSizes.data();
 
-        descriptorPool = vk::raii::DescriptorPool(gfx.getDevice(), poolInfo);
+        m_descriptorPool = vk::raii::DescriptorPool(m_gfx.getDevice(), poolInfo);
     }
 
     void createDescriptorSets() {
-        auto maxFramesInFlight = gfx.getMaxFramesInFlight();
+        auto maxFramesInFlight = m_gfx.getMaxFramesInFlight();
 
-        std::vector<vk::DescriptorSetLayout> layouts(maxFramesInFlight, *descriptorSetLayout);
+        std::vector<vk::DescriptorSetLayout> layouts(maxFramesInFlight, *m_descriptorSetLayout);
 
         vk::DescriptorSetAllocateInfo allocInfo{};
-        allocInfo.descriptorPool = descriptorPool;
+        allocInfo.descriptorPool = m_descriptorPool;
         allocInfo.descriptorSetCount = static_cast<uint32_t>(layouts.size());
         allocInfo.pSetLayouts = layouts.data();
 
-        descriptorSets = gfx.getDevice().allocateDescriptorSets(allocInfo);
+        m_descriptorSets = m_gfx.getDevice().allocateDescriptorSets(allocInfo);
 
         // storage buffer descriptor info (same buffer for all sets)
         vk::DescriptorBufferInfo storageBufferInfo{};
-        storageBufferInfo.buffer = storageBuffer;
+        storageBufferInfo.buffer = m_storageBuffer;
         storageBufferInfo.offset = 0;
         storageBufferInfo.range = sizeof(StorageBufferObject);
 
         for (uint8_t i = 0; i < maxFramesInFlight; i++) {
             vk::DescriptorBufferInfo uboBufferInfo{};
-            uboBufferInfo.buffer = uniformBuffers[i];
+            uboBufferInfo.buffer = m_uniformBuffers[i];
             uboBufferInfo.offset = 0;
             uboBufferInfo.range = sizeof(UniformBufferObject);
 
             vk::DescriptorImageInfo imageInfo{};
-            imageInfo.sampler = textureSampler;
-            imageInfo.imageView = textureImageView;
+            imageInfo.sampler = m_textureSampler;
+            imageInfo.imageView = m_textureImageView;
             imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
 
             vk::WriteDescriptorSet uboWrite{};
-            uboWrite.dstSet = descriptorSets[i];
+            uboWrite.dstSet = m_descriptorSets[i];
             uboWrite.dstBinding = 0;
             uboWrite.dstArrayElement = 0;
             uboWrite.descriptorCount = 1;
             uboWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
             uboWrite.pBufferInfo = &uboBufferInfo;
 
-            gfx.getDevice().updateDescriptorSets(uboWrite, {});
+            m_gfx.getDevice().updateDescriptorSets(uboWrite, {});
 
             vk::WriteDescriptorSet ssboWrite{};
-            ssboWrite.dstSet = descriptorSets[i];
+            ssboWrite.dstSet = m_descriptorSets[i];
             ssboWrite.dstBinding = 1;
             ssboWrite.dstArrayElement = 0;
             ssboWrite.descriptorCount = 1;
             ssboWrite.descriptorType = vk::DescriptorType::eStorageBuffer;
             ssboWrite.pBufferInfo = &storageBufferInfo;
 
-            gfx.getDevice().updateDescriptorSets(ssboWrite, {});
+            m_gfx.getDevice().updateDescriptorSets(ssboWrite, {});
 
             vk::WriteDescriptorSet imageWrite{};
-            imageWrite.dstSet = descriptorSets[i];
+            imageWrite.dstSet = m_descriptorSets[i];
             imageWrite.dstBinding = 2;
             imageWrite.dstArrayElement = 0;
             imageWrite.descriptorCount = 1;
             imageWrite.descriptorType = vk::DescriptorType::eCombinedImageSampler;
             imageWrite.pImageInfo = &imageInfo;
 
-            gfx.getDevice().updateDescriptorSets(imageWrite, {});
+            m_gfx.getDevice().updateDescriptorSets(imageWrite, {});
         }
     }
 
     void initRenderPasses()
     {
-        auto& renderGraph = gfx.getRenderGraph();
-        auto swapChainExtent = gfx.getSwapChainExtent();
+        auto& renderGraph = m_gfx.getRenderGraph();
+        auto swapChainExtent = m_gfx.getSwapChainExtent();
 
         // Main rendering pass: transition Undefined -> ColorAttachmentOptimal and record in the pass
         RenderPassNode mainPass{};
@@ -657,7 +657,7 @@ private:
 
             vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
             vk::RenderingAttachmentInfo attachmentInfo{};
-            attachmentInfo.imageView = gfx.getSwapChainImageView(imageIndex);
+            attachmentInfo.imageView = m_gfx.getSwapChainImageView(imageIndex);
             attachmentInfo.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
             attachmentInfo.loadOp = vk::AttachmentLoadOp::eClear;
             attachmentInfo.storeOp = vk::AttachmentStoreOp::eStore;
@@ -666,22 +666,22 @@ private:
             vk::RenderingInfo renderingInfo{};
             renderingInfo.renderArea.offset.x = 0;
             renderingInfo.renderArea.offset.y = 0;
-            renderingInfo.renderArea.extent = gfx.getSwapChainExtent();
+            renderingInfo.renderArea.extent = m_gfx.getSwapChainExtent();
             renderingInfo.layerCount = 1;
             renderingInfo.colorAttachmentCount = 1;
             renderingInfo.pColorAttachments = &attachmentInfo;
 
             cmd.beginRendering(renderingInfo);
-            cmd.bindVertexBuffers(0, *vertexBuffer, { 0 });
-            cmd.bindIndexBuffer(*indexBuffer, 0, vk::IndexType::eUint32);
-            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, *descriptorSets[imageIndex], nullptr);
+            cmd.bindVertexBuffers(0, *m_vertexBuffer, { 0 });
+            cmd.bindIndexBuffer(*m_indexBuffer, 0, vk::IndexType::eUint32);
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, m_pipelineLayout, 0, *m_descriptorSets[imageIndex], nullptr);
 
-            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline);
+            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, m_graphicsPipeline);
 
             cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
             cmd.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
 
-            cmd.drawIndexedIndirect(*indirectBuffer, 0, 1, static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand)));
+            cmd.drawIndexedIndirect(*m_indirectBuffer, 0, 1, static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand)));
 
             cmd.endRendering();
         };
@@ -717,24 +717,24 @@ private:
         ubo.proj = glm::perspective(glm::radians(45.0f), static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height), 0.1f, 10.0f);
         ubo.proj[1][1] *= -1;
 
-        memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
+        memcpy(m_uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
     }
 
     void drawFrame() {
-        gfx.getRenderGraph()->executeFrame();
+        m_gfx.getRenderGraph()->executeFrame();
     }
 
     void mainLoop() {
-        while (!glfwWindowShouldClose(window)) {
+        while (!glfwWindowShouldClose(m_window)) {
             glfwPollEvents();
             drawFrame();
         }
 
-        gfx.getDevice().waitIdle();
+        m_gfx.getDevice().waitIdle();
     }
 
     void cleanup() {
-        glfwDestroyWindow(window);
+        glfwDestroyWindow(m_window);
 
         glfwTerminate();
     }
