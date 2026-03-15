@@ -49,6 +49,17 @@ public:
 	const std::unique_ptr<RenderGraph>& getRenderGraph() const { return m_renderGraph; }
 
     Buffer makeBuffer(const vk::BufferCreateInfo& bufferInfo, vk::MemoryPropertyFlags memProperties);
+    void updateBuffer(const Buffer& buffer, void* contentData, size_t contentSize);
+
+    template<typename T>
+    void updateBuffer(const Buffer& buffer, T data) {
+        updateBuffer(buffer, &data, sizeof(T));
+    }
+
+    template<typename T>
+    void updateBuffer(const Buffer& buffer, std::vector<T> data) {
+		updateBuffer(buffer, data.data(), data.size() * sizeof(T));
+    }
 
 private:
 	void createInstance(const std::string& appName, const std::vector<const char*>& extensions);
@@ -80,4 +91,3 @@ private:
 
     std::unique_ptr<RenderGraph> m_renderGraph = nullptr;
 };
-

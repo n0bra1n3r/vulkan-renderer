@@ -365,3 +365,38 @@ Gfx::Buffer Gfx::makeBuffer(const vk::BufferCreateInfo& bufferInfo, vk::MemoryPr
 
     return Gfx::Buffer(std::move(buffer), std::move(bufferMemory), bufferInfo.size);
 }
+
+void Gfx::updateBuffer(const Buffer& buffer, void* contentData, size_t contentSize)
+{
+    vk::BufferCreateInfo stagingInfo{};
+    stagingInfo.size = contentSize;
+    stagingInfo.usage = vk::BufferUsageFlagBits::eTransferSrc;
+
+    auto stagingBuffer = makeBuffer(stagingInfo,
+        vk::MemoryPropertyFlagBits::eHostVisible |
+        vk::MemoryPropertyFlagBits::eHostCoherent);
+
+    void* data = stagingBuffer.map();
+    memcpy(data, contentData, stagingInfo.size);
+    stagingBuffer.unmap();
+
+    vk::CommandBufferAllocateInfo allocInfo{};
+    allocInfo.commandPool = m_commandPool;
+    allocInfo.level = vk::CommandBufferLevel::ePrimary;
+    allocInfo.commandBufferCount = 1;
+
+    auto commandCopyBuffer = std::move(m_device.allocateCommandBuffers(allocInfo).front());
+    commandCopyBuffer.begin({ vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
+	vk::BufferCopy region{};
+	region.size = stagingInfo.size;
+    commandCopyBuffer.copyBuffer(stagingBuffer, buffer, region);
+    commandCopyBuffer.end();
+
+    vk::SubmitInfo submitInfo{};
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &*commandCopyBuffer;
+
+    // TODO: use a fence instead
+    m_graphicsQueue.submit(submitInfo, nullptr);
+    m_graphicsQueue.waitIdle();
+}

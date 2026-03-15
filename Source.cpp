@@ -293,40 +293,6 @@ private:
     }
 
     template<class T>
-    void uploadBuffer(const std::vector<T>& contents, const Gfx::Buffer& buffer) {
-        vk::BufferCreateInfo stagingInfo{};
-        stagingInfo.size = sizeof(contents[0]) * contents.size();
-        stagingInfo.usage = vk::BufferUsageFlagBits::eTransferSrc;
-
-        auto stagingBuffer = m_gfx.makeBuffer(stagingInfo, 
-            vk::MemoryPropertyFlagBits::eHostVisible |
-            vk::MemoryPropertyFlagBits::eHostCoherent);
-
-        void* data = stagingBuffer.map();
-        memcpy(data, contents.data(), stagingInfo.size);
-        stagingBuffer.unmap();
-
-        vk::CommandBufferAllocateInfo allocInfo{};
-        allocInfo.commandPool = m_gfx.getCommandPool();
-        allocInfo.level = vk::CommandBufferLevel::ePrimary;
-        allocInfo.commandBufferCount = 1;
-
-        auto commandCopyBuffer = std::move(m_gfx.getDevice().allocateCommandBuffers(allocInfo).front());
-        commandCopyBuffer.begin({ vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
-        commandCopyBuffer.copyBuffer(stagingBuffer, buffer, vk::BufferCopy(0, 0, stagingInfo.size));
-        commandCopyBuffer.end();
-
-        vk::SubmitInfo submitInfo{};
-		submitInfo.commandBufferCount = 1;
-		submitInfo.pCommandBuffers = &*commandCopyBuffer;
-
-		auto graphicsQueue = m_gfx.getGraphicsQueue();
-
-        graphicsQueue.submit(submitInfo, nullptr);
-        graphicsQueue.waitIdle();
-    }
-
-    template<class T>
     void uploadImage(const std::vector<T>& contents, uint32_t width, uint32_t height, const vk::raii::Image& image) {
         vk::BufferCreateInfo stagingInfo{};
         stagingInfo.size = sizeof(contents[0]) * contents.size();
@@ -452,8 +418,7 @@ private:
         bufferInfo.usage = vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst;
 
 		m_vertexBuffer = m_gfx.makeBuffer(bufferInfo, vk::MemoryPropertyFlagBits::eDeviceLocal);
-
-		uploadBuffer(vertices, m_vertexBuffer);
+		m_gfx.updateBuffer(m_vertexBuffer, vertices);
 	}
 
     void createIndexBuffer() {
@@ -462,8 +427,7 @@ private:
         bufferInfo.usage = vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst;
         
 		m_indexBuffer = m_gfx.makeBuffer(bufferInfo, vk::MemoryPropertyFlagBits::eDeviceLocal);
-
-		uploadBuffer(indices, m_indexBuffer);
+		m_gfx.updateBuffer(m_indexBuffer, indices);
     }
 
     void createIndirectBuffer() {
@@ -472,8 +436,7 @@ private:
         bufferInfo.usage = vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst;
         
 		m_indirectBuffer = m_gfx.makeBuffer(bufferInfo, vk::MemoryPropertyFlagBits::eDeviceLocal);
-
-        uploadBuffer(std::vector<vk::DrawIndexedIndirectCommand>{ drawCmd }, m_indirectBuffer);
+		m_gfx.updateBuffer(m_indirectBuffer, drawCmd);
 	}
 
     void createUniformBuffers() {
@@ -505,7 +468,7 @@ private:
 		StorageBufferObject ssboData{};
 		ssboData.colour = glm::vec3(1.0f, 1.0f, 0.0f);
 
-        uploadBuffer(std::vector<StorageBufferObject>{ssboData}, m_storageBuffer);
+		m_gfx.updateBuffer(m_storageBuffer, ssboData);
     }
 
     void createDescriptorPool() {
