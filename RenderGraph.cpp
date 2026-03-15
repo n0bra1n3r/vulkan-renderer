@@ -1,6 +1,6 @@
 #include "RenderGraph.hpp"
 
-RenderGraph::RenderGraph(vk::raii::Device& device, vk::raii::SwapchainKHR& swapchain, vk::raii::Queue& graphicsQueue, vk::raii::Queue& presentQueue, vk::raii::CommandPool& commandPool)
+Gfx::RenderGraph::RenderGraph(vk::raii::Device& device, vk::raii::SwapchainKHR& swapchain, vk::raii::Queue& graphicsQueue, vk::raii::Queue& presentQueue, vk::raii::CommandPool& commandPool)
     : m_device(device),
     m_swapchain(swapchain),
     m_graphicsQueue(graphicsQueue),
@@ -10,12 +10,12 @@ RenderGraph::RenderGraph(vk::raii::Device& device, vk::raii::SwapchainKHR& swapc
     m_swapchainImages = m_swapchain.getImages();
 }
 
-void RenderGraph::addPass(RenderPassNode const& node)
+void Gfx::RenderGraph::addPass(Gfx::RenderPassNode const& node)
 {
     m_passes.push_back(node);
 }
 
-void RenderGraph::init()
+void Gfx::RenderGraph::init()
 {
     m_imageCount = static_cast<uint32_t>(m_swapchainImages.size());
     if (m_imageCount == 0) throw std::runtime_error("Swapchain has zero images");
@@ -47,7 +47,7 @@ void RenderGraph::init()
     }
 }
 
-void RenderGraph::executeFrame()
+void Gfx::RenderGraph::executeFrame()
 {
     // Round-robin frame index for per-frame sync objects
     const uint32_t frameIndex = m_currentFrame % m_imageCount;

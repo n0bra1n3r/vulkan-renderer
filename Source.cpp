@@ -5,6 +5,11 @@
 #include <stdexcept>
 #include <chrono>
 
+#include "Api.hpp"
+#include "Buffer.hpp"
+#include "Image.hpp"
+#include "RenderGraph.hpp"
+
 #include <vulkan/vulkan_raii.hpp>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -15,8 +20,6 @@
 #include <glm/gtc/matrix_transform.hpp>
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
-
-#include "Gfx.h"
 
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
@@ -85,7 +88,7 @@ public:
 
 private:
     GLFWwindow* m_window = nullptr;
-	Gfx m_gfx;
+	Gfx::Api m_gfx;
 
     vk::raii::DescriptorSetLayout m_descriptorSetLayout = nullptr;
     vk::raii::PipelineLayout m_pipelineLayout = nullptr;
@@ -456,7 +459,7 @@ private:
         auto swapChainExtent = m_gfx.getSwapChainExtent();
 
         // Main rendering pass: transition Undefined -> ColorAttachmentOptimal and record in the pass
-        RenderPassNode mainPass{};
+        Gfx::RenderPassNode mainPass{};
         mainPass.name = "MainPass";
         mainPass.oldLayout = vk::ImageLayout::eUndefined;
         mainPass.newLayout = vk::ImageLayout::eColorAttachmentOptimal;
@@ -504,7 +507,7 @@ private:
         renderGraph->addPass(mainPass);
 
         // Final transition pass: move from color attachment -> present.
-        RenderPassNode presentTransition{};
+        Gfx::RenderPassNode presentTransition{};
         presentTransition.name = "PresentTransition";
         presentTransition.oldLayout = vk::ImageLayout::eColorAttachmentOptimal;
         presentTransition.newLayout = vk::ImageLayout::ePresentSrcKHR;

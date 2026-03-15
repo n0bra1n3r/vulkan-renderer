@@ -134,12 +134,16 @@
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="Gfx.cpp" />
+    <ClCompile Include="Api.cpp" />
+    <ClCompile Include="Buffer.cpp" />
+    <ClCompile Include="Image.cpp" />
     <ClCompile Include="RenderGraph.cpp" />
     <ClCompile Include="Source.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Gfx.h" />
+    <ClInclude Include="Buffer.hpp" />
+    <ClInclude Include="Api.hpp" />
+    <ClInclude Include="Image.hpp" />
     <ClInclude Include="RenderGraph.hpp" />
   </ItemGroup>
   <ItemGroup>

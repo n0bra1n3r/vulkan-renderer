@@ -1,4 +1,4 @@
-#include "Gfx.h"
+#include "Api.hpp"
 
 #include <fstream>
 #include <windows.h>
@@ -8,6 +8,8 @@
 #include <glm/glm.hpp>
 #include <vulkan/vulkan_raii.hpp>
 
+#include "Buffer.hpp"
+#include "Image.hpp"
 #include "RenderGraph.hpp"
 
 #undef max
@@ -142,7 +144,7 @@ static uint32_t findMemoryType(const vk::raii::PhysicalDevice& physicalDevice, u
     throw std::runtime_error("failed to find suitable memory type!");
 }
 
-static void transitionImageLayout(const vk::raii::CommandBuffer& commandBuffer, const Gfx::Image& image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout) {
+static void transitionImageLayout(const vk::raii::CommandBuffer& commandBuffer, const vk::Image& image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout) {
     vk::ImageMemoryBarrier barrier{};
     barrier.oldLayout = oldLayout;
     barrier.newLayout = newLayout;
@@ -176,7 +178,7 @@ static void transitionImageLayout(const vk::raii::CommandBuffer& commandBuffer, 
     commandBuffer.pipelineBarrier(sourceStage, destinationStage, {}, {}, nullptr, barrier);
 }
 
-void Gfx::init(const std::string& appName, const std::vector<const char*>& extensions, void* window) {
+void Gfx::Api::init(const std::string& appName, const std::vector<const char*>& extensions, void* window) {
     createInstance(appName, extensions);
     createSurface(window);
     pickPhysicalDevice();
@@ -187,7 +189,7 @@ void Gfx::init(const std::string& appName, const std::vector<const char*>& exten
     initRenderGraph();
 }
 
-void Gfx::createInstance(const std::string& appName, const std::vector<const char*>& extensions) {
+void Gfx::Api::createInstance(const std::string& appName, const std::vector<const char*>& extensions) {
     vk::ApplicationInfo appInfo{};
     appInfo.pApplicationName = appName.c_str();
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
@@ -241,7 +243,7 @@ void Gfx::createInstance(const std::string& appName, const std::vector<const cha
     m_instance = vk::raii::Instance(m_context, createInfo);
 }
 
-void Gfx::createSurface(void* window) {
+void Gfx::Api::createSurface(void* window) {
     vk::Win32SurfaceCreateInfoKHR createInfo{};
     createInfo.sType = vk::StructureType::eWin32SurfaceCreateInfoKHR;
     createInfo.hwnd = static_cast<HWND>(window);
@@ -250,7 +252,7 @@ void Gfx::createSurface(void* window) {
     m_surface = vk::raii::SurfaceKHR(m_instance, createInfo);
 }
 
-void Gfx::pickPhysicalDevice() {
+void Gfx::Api::pickPhysicalDevice() {
     auto devices = m_instance.enumeratePhysicalDevices();
     const auto devIter = std::find_if(devices.begin(), devices.end(),
         [&](auto const& device)
@@ -284,7 +286,7 @@ void Gfx::pickPhysicalDevice() {
     }
 }
 
-void Gfx::createLogicalDevice() {
+void Gfx::Api::createLogicalDevice() {
     std::tie(m_graphicsFamily, m_presentFamily) = findQueueFamilies(m_physicalDevice, m_surface);
     auto queuePriority = 0.0f;
 
@@ -320,7 +322,7 @@ void Gfx::createLogicalDevice() {
     m_presentQueue = vk::raii::Queue(m_device, m_presentFamily, 0);
 }
 
-void Gfx::createSwapChain(void* window) {
+void Gfx::Api::createSwapChain(void* window) {
     auto surfaceCapabilities = m_physicalDevice.getSurfaceCapabilitiesKHR(m_surface);
     auto availableFormats = m_physicalDevice.getSurfaceFormatsKHR(m_surface);
     auto availablePresentModes = m_physicalDevice.getSurfacePresentModesKHR(m_surface);
@@ -354,7 +356,7 @@ void Gfx::createSwapChain(void* window) {
 	m_maxFramesInFlight = static_cast<uint8_t>(m_swapChainImages.size());
 }
 
-void Gfx::createImageViews() {
+void Gfx::Api::createImageViews() {
     vk::ImageViewCreateInfo imageViewCreateInfo{};
     imageViewCreateInfo.viewType = vk::ImageViewType::e2D;
     imageViewCreateInfo.format = m_swapChainSurfaceFormat.format;
@@ -369,7 +371,7 @@ void Gfx::createImageViews() {
     }
 }
 
-void Gfx::createCommandPool() {
+void Gfx::Api::createCommandPool() {
     vk::CommandPoolCreateInfo poolInfo{};
     poolInfo.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
     poolInfo.queueFamilyIndex = m_graphicsFamily;
@@ -377,13 +379,13 @@ void Gfx::createCommandPool() {
     m_commandPool = vk::raii::CommandPool(m_device, poolInfo);
 }
 
-void Gfx::initRenderGraph()
+void Gfx::Api::initRenderGraph()
 {
     // construct the render graph (holds references, does NOT copy objects)
     m_renderGraph.reset(new RenderGraph(m_device, m_swapChain, m_graphicsQueue, m_presentQueue, m_commandPool));
 }
 
-Gfx::Buffer Gfx::makeBuffer(const vk::BufferCreateInfo& bufferInfo, vk::MemoryPropertyFlags memProperties)
+Gfx::Buffer Gfx::Api::makeBuffer(const vk::BufferCreateInfo& bufferInfo, vk::MemoryPropertyFlags memProperties)
 {
     vk::raii::Buffer buffer(m_device, bufferInfo);
 
@@ -400,7 +402,7 @@ Gfx::Buffer Gfx::makeBuffer(const vk::BufferCreateInfo& bufferInfo, vk::MemoryPr
     return Gfx::Buffer(std::move(buffer), std::move(bufferMemory), bufferInfo.size);
 }
 
-void Gfx::updateBuffer(const Buffer& buffer, void* contentData, size_t contentSize)
+void Gfx::Api::updateBuffer(const Buffer& buffer, void* contentData, size_t contentSize)
 {
     vk::BufferCreateInfo stagingInfo{};
     stagingInfo.size = contentSize;
@@ -435,7 +437,7 @@ void Gfx::updateBuffer(const Buffer& buffer, void* contentData, size_t contentSi
     m_graphicsQueue.waitIdle();
 }
 
-Gfx::Image Gfx::makeImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryPropertyFlags properties)
+Gfx::Image Gfx::Api::makeImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryPropertyFlags properties)
 {
     vk::raii::Image image(m_device, imageInfo);
 
@@ -452,7 +454,7 @@ Gfx::Image Gfx::makeImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryProper
     return Gfx::Image(std::move(image), std::move(imageMemory), imageInfo.extent, imageInfo.format);
 }
 
-void Gfx::updateImage(const Gfx::Image& image, void* contentData, size_t contentSize) {
+void Gfx::Api::updateImage(const Gfx::Image& image, void* contentData, size_t contentSize) {
     vk::BufferCreateInfo stagingInfo{};
     stagingInfo.size = contentSize;
     stagingInfo.usage = vk::BufferUsageFlagBits::eTransferSrc;
@@ -491,7 +493,7 @@ void Gfx::updateImage(const Gfx::Image& image, void* contentData, size_t content
     m_graphicsQueue.waitIdle();
 }
 
-vk::raii::ImageView Gfx::makeImageView(const Gfx::Image& image) {
+vk::raii::ImageView Gfx::Api::makeImageView(const Gfx::Image& image) {
     vk::ImageViewCreateInfo viewInfo{};
     viewInfo.image = image;
     viewInfo.viewType = vk::ImageViewType::e2D;
