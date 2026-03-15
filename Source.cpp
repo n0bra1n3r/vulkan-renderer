@@ -281,81 +281,6 @@ private:
         return vk::raii::ImageView(m_gfx.getDevice(), viewInfo);
     }
 
-    template<class T>
-    void uploadImage(const std::vector<T>& contents, uint32_t width, uint32_t height, const Gfx::Image& image) {
-        vk::BufferCreateInfo stagingInfo{};
-        stagingInfo.size = sizeof(contents[0]) * contents.size();
-        stagingInfo.usage = vk::BufferUsageFlagBits::eTransferSrc;
-
-        auto stagingBuffer = m_gfx.makeBuffer(stagingInfo,
-            vk::MemoryPropertyFlagBits::eHostVisible |
-            vk::MemoryPropertyFlagBits::eHostCoherent);
-
-        void* data = stagingBuffer.map();
-        memcpy(data, contents.data(), stagingInfo.size);
-        stagingBuffer.unmap();
-
-        vk::CommandBufferAllocateInfo allocInfo{};
-        allocInfo.commandPool = m_gfx.getCommandPool();
-        allocInfo.level = vk::CommandBufferLevel::ePrimary;
-        allocInfo.commandBufferCount = 1;
-
-        auto commandCopyBuffer = std::move(m_gfx.getDevice().allocateCommandBuffers(allocInfo).front());
-        commandCopyBuffer.begin({ vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
-		transitionImageLayout(commandCopyBuffer, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
-        vk::BufferImageCopy region{};
-        region.imageSubresource = { vk::ImageAspectFlagBits::eColor, 0, 0, 1 };
-        region.imageExtent.width = width;
-        region.imageExtent.height = height;
-        region.imageExtent.depth = 1;
-        commandCopyBuffer.copyBufferToImage(stagingBuffer, image, vk::ImageLayout::eTransferDstOptimal, { region });
-        transitionImageLayout(commandCopyBuffer, image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-        commandCopyBuffer.end();
-
-        vk::SubmitInfo submitInfo{};
-        submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = &*commandCopyBuffer;
-
-        auto graphicsQueue = m_gfx.getGraphicsQueue();
-
-        graphicsQueue.submit(submitInfo, nullptr);
-        graphicsQueue.waitIdle();
-    }
-
-    void transitionImageLayout(const vk::raii::CommandBuffer& commandBuffer, const Gfx::Image& image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout) {
-        vk::ImageMemoryBarrier barrier{};
-        barrier.oldLayout = oldLayout;
-        barrier.newLayout = newLayout;
-        barrier.image = image;
-        barrier.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
-
-        vk::PipelineStageFlags sourceStage;
-        vk::PipelineStageFlags destinationStage;
-
-        if (oldLayout == vk::ImageLayout::eUndefined && newLayout == vk::ImageLayout::eTransferDstOptimal)
-        {
-            barrier.srcAccessMask = {};
-            barrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
-
-            sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
-            destinationStage = vk::PipelineStageFlagBits::eTransfer;
-        }
-        else if (oldLayout == vk::ImageLayout::eTransferDstOptimal && newLayout == vk::ImageLayout::eShaderReadOnlyOptimal)
-        {
-            barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
-            barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
-
-            sourceStage = vk::PipelineStageFlagBits::eTransfer;
-            destinationStage = vk::PipelineStageFlagBits::eFragmentShader;
-        }
-        else
-        {
-            throw std::invalid_argument("unsupported layout transition!");
-        }
-
-        commandBuffer.pipelineBarrier(sourceStage, destinationStage, {}, {}, nullptr, barrier);
-    }
-
     void createTextureImage() {
         int texWidth, texHeight, texChannels;
         auto pixels = stbi_load("Textures/statue.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
@@ -379,8 +304,7 @@ private:
         imageInfo.usage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled;
 
 		m_textureImage = m_gfx.makeImage(imageInfo, vk::MemoryPropertyFlagBits::eDeviceLocal);
-
-		uploadImage(imageBytes, texWidth, texHeight, m_textureImage);
+		m_gfx.updateImage(m_textureImage, imageBytes);
     }
 
     void createTextureImageView() {

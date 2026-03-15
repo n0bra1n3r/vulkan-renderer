@@ -28,6 +28,7 @@ public:
     void updateBuffer(const Buffer& buffer, void* contentData, size_t contentSize);
 
     Image makeImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryPropertyFlags properties);
+    void updateImage(const Gfx::Image& image, void* contentData, size_t contentSize);
 
     template<typename T>
     void updateBuffer(const Buffer& buffer, T data) {
@@ -37,6 +38,11 @@ public:
     template<typename T>
     void updateBuffer(const Buffer& buffer, std::vector<T> data) {
 		updateBuffer(buffer, data.data(), data.size() * sizeof(T));
+    }
+
+    template<typename T>
+    void updateImage(const Image& image, std::vector<T> data) {
+        updateImage(image, data.data(), data.size() * sizeof(T));
     }
 
 private:
@@ -104,7 +110,7 @@ public:
         friend class Gfx;
 
         Image(vk::raii::Image&& image, vk::raii::DeviceMemory&& bufferMemory, vk::Extent3D extent)
-            : m_image(std::move(image)), m_bufferMemory(std::move(bufferMemory)), m_extent(extent)
+			: m_image(std::move(image)), m_bufferMemory(std::move(bufferMemory)), m_extent(extent)
         {
         }
 

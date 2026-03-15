@@ -142,6 +142,40 @@ static uint32_t findMemoryType(const vk::raii::PhysicalDevice& physicalDevice, u
     throw std::runtime_error("failed to find suitable memory type!");
 }
 
+static void transitionImageLayout(const vk::raii::CommandBuffer& commandBuffer, const Gfx::Image& image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout) {
+    vk::ImageMemoryBarrier barrier{};
+    barrier.oldLayout = oldLayout;
+    barrier.newLayout = newLayout;
+    barrier.image = image;
+    barrier.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
+
+    vk::PipelineStageFlags sourceStage;
+    vk::PipelineStageFlags destinationStage;
+
+    if (oldLayout == vk::ImageLayout::eUndefined && newLayout == vk::ImageLayout::eTransferDstOptimal)
+    {
+        barrier.srcAccessMask = {};
+        barrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
+
+        sourceStage = vk::PipelineStageFlagBits::eTopOfPipe;
+        destinationStage = vk::PipelineStageFlagBits::eTransfer;
+    }
+    else if (oldLayout == vk::ImageLayout::eTransferDstOptimal && newLayout == vk::ImageLayout::eShaderReadOnlyOptimal)
+    {
+        barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+        barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
+        sourceStage = vk::PipelineStageFlagBits::eTransfer;
+        destinationStage = vk::PipelineStageFlagBits::eFragmentShader;
+    }
+    else
+    {
+        throw std::invalid_argument("unsupported layout transition!");
+    }
+
+    commandBuffer.pipelineBarrier(sourceStage, destinationStage, {}, {}, nullptr, barrier);
+}
+
 void Gfx::init(const std::string& appName, const std::vector<const char*>& extensions, void* window) {
     createInstance(appName, extensions);
     createSurface(window);
@@ -416,4 +450,43 @@ Gfx::Image Gfx::makeImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryProper
     image.bindMemory(imageMemory, 0);
 
     return Gfx::Image(std::move(image), std::move(imageMemory), imageInfo.extent);
+}
+
+void Gfx::updateImage(const Gfx::Image& image, void* contentData, size_t contentSize) {
+    vk::BufferCreateInfo stagingInfo{};
+    stagingInfo.size = contentSize;
+    stagingInfo.usage = vk::BufferUsageFlagBits::eTransferSrc;
+
+    auto stagingBuffer = makeBuffer(stagingInfo,
+        vk::MemoryPropertyFlagBits::eHostVisible |
+        vk::MemoryPropertyFlagBits::eHostCoherent);
+
+    void* data = stagingBuffer.map();
+    memcpy(data, contentData, stagingInfo.size);
+    stagingBuffer.unmap();
+
+    vk::CommandBufferAllocateInfo allocInfo{};
+    allocInfo.commandPool = m_commandPool;
+    allocInfo.level = vk::CommandBufferLevel::ePrimary;
+    allocInfo.commandBufferCount = 1;
+
+    auto commandCopyBuffer = std::move(m_device.allocateCommandBuffers(allocInfo).front());
+    commandCopyBuffer.begin({ vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
+    transitionImageLayout(commandCopyBuffer, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
+    vk::BufferImageCopy region{};
+    region.imageSubresource = { vk::ImageAspectFlagBits::eColor, 0, 0, 1 };
+    region.imageExtent.width = image.m_extent.width;
+    region.imageExtent.height = image.m_extent.height;
+    region.imageExtent.depth = image.m_extent.depth;
+    commandCopyBuffer.copyBufferToImage(stagingBuffer, image, vk::ImageLayout::eTransferDstOptimal, { region });
+    transitionImageLayout(commandCopyBuffer, image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+    commandCopyBuffer.end();
+
+    vk::SubmitInfo submitInfo{};
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &*commandCopyBuffer;
+
+    // TODO: use a fence instead
+    m_graphicsQueue.submit(submitInfo, nullptr);
+    m_graphicsQueue.waitIdle();
 }
