@@ -35,7 +35,10 @@ VertexOutput main(VertexInput input)
     InstanceData instanceData = ssbo[input.instanceID];
     
     VertexOutput output;
-    output.sv_position = mul(instanceData.transform, mul(ubo.proj, mul(ubo.view, mul(ubo.model, float4(input.position, 1.0)))));
+    float4 localPos = mul(ubo.model, float4(input.position, 1.0));
+    float4 worldPos = mul(instanceData.transform, localPos);
+    float4 viewPos = mul(ubo.view, worldPos);
+    output.sv_position = mul(ubo.proj, viewPos);
     output.tint = instanceData.tint;
     output.texCoord = input.texCoord;
     return output;
