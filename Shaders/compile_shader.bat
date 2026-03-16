@@ -30,7 +30,7 @@ if /i "!ext2!"=="hlsl" (
 
 if "!compile!"=="1" (
     echo Compiling %FILE% with !profile!...
-    "%DXC%" -spirv -T !profile! -E main -Fo "%DIR%!NAME!.spv" "%FILE%"
+    "%DXC%" -spirv -T !profile! -E main -Zi -Qembed_debug -fspv-debug=vulkan-with-source -fspv-target-env=vulkan1.3 -Fo "%DIR%!NAME!.spv" "%FILE%"
 ) else (
     echo Skipping %FILE%.
 )
