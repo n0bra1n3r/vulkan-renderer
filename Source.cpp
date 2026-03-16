@@ -16,8 +16,11 @@
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
 #define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
+#define GLM_ENABLE_EXPERIMENTAL
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
+#include <glm/gtx/quaternion.hpp>
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
@@ -46,11 +49,17 @@ struct Vertex
 
 struct Shape
 {
-    vk::DrawIndexedIndirectCommand drawCmd;
+    glm::mat4 transform;
+    glm::vec4 tint;
+	int32_t textureIndex;
 };
 
 struct Cube : public Shape
 {
+    static size_t getID() {
+        return 0;
+    }
+
     static std::vector<Vertex> getVertices() {
         return {
             // Front face (z = +0.5)
@@ -111,11 +120,6 @@ struct UniformBufferObject
     glm::mat4 proj;
 };
 
-struct StorageBufferObject
-{
-    glm::vec3 colour;
-};
-
 class HelloTriangleApplication {
 public:
     void run() {
@@ -127,7 +131,7 @@ public:
 
 private:
     GLFWwindow* m_window = nullptr;
-	Gfx::Api m_gfx;
+    Gfx::Api m_gfx{};
 
     vk::raii::DescriptorSetLayout m_descriptorSetLayout = nullptr;
     vk::raii::PipelineLayout m_pipelineLayout = nullptr;
@@ -139,10 +143,15 @@ private:
     Gfx::Buffer m_indexBuffer = nullptr;
     Gfx::Buffer m_indirectBuffer = nullptr;
     Gfx::Buffer m_storageBuffer = nullptr;
-    std::vector<Gfx::Buffer> m_uniformBuffers;
-    std::vector<void*> m_uniformBuffersMapped;
+    std::vector<Gfx::Buffer> m_uniformBuffers{};
+    std::vector<void*> m_uniformBuffersMapped{};
     vk::raii::DescriptorPool m_descriptorPool = nullptr;
-    std::vector<vk::raii::DescriptorSet> m_descriptorSets;
+    std::vector<vk::raii::DescriptorSet> m_descriptorSets{};
+
+    std::vector<Vertex> m_vertices{};
+    std::vector<uint32_t> m_indices{};
+	std::vector<Shape> m_shapes{};
+    std::vector<VkDrawIndexedIndirectCommand> m_drawCmds{};
 
     void initWindow() {
         glfwInit();
@@ -155,6 +164,8 @@ private:
 
     void initVulkan() {
 		m_gfx.init("Vulkan App", getRequiredExtensions(), glfwGetWin32Window(m_window));
+
+        loadShapes();
 
         createDescriptorSetLayout();
         createGraphicsPipeline();
@@ -169,6 +180,52 @@ private:
         createDescriptorSets();
 
         initRenderPasses();
+    }
+
+    void loadShapes() {
+        addShape<Cube>(glm::vec3(-0.5, 0, 0), glm::quat(1, 0, 0, 0), glm::vec3(1), glm::vec4(0, 1, 0, 1));
+        addShape<Cube>(glm::vec3(0.5, 0, 0), glm::quat(1, 0, 0, 0), glm::vec3(1), glm::vec4(1, 0, 0, 1));
+    }
+
+    template<class T>
+    void addShape(const glm::vec3& position, const glm::quat& rotation, const glm::vec3& scale, const glm::vec4& tint) {
+        auto translation = glm::translate(glm::mat4(1), position);
+        auto orientation = glm::toMat4(rotation);
+        auto scaling = glm::scale(glm::mat4(1), scale);
+
+        auto shape = T{};
+        shape.transform = translation * orientation * scaling;
+        shape.tint = tint;
+        // TODO: support multiple textures
+        shape.textureIndex = 0;
+
+		auto id = T::getID();
+
+        if (id < m_drawCmds.size()) {
+            m_drawCmds[id].instanceCount++;
+            for (size_t nextId = id + 1; nextId < m_drawCmds.size(); nextId++) {
+                m_drawCmds[nextId].firstInstance++;
+			}
+
+            m_shapes.emplace_back(std::move(shape));
+            return;
+		}
+
+        auto cmd = VkDrawIndexedIndirectCommand();
+		cmd.firstIndex = static_cast<uint32_t>(m_indices.size());
+        cmd.indexCount = static_cast<uint32_t>(shape.getIndices().size());
+        cmd.instanceCount = 1;
+        cmd.vertexOffset = static_cast<int32_t>(m_vertices.size());
+        cmd.firstInstance = static_cast<uint32_t>(m_shapes.size());
+        m_drawCmds.push_back(cmd);
+
+        auto vertices = shape.getVertices();
+        m_vertices.insert(m_vertices.end(), vertices.begin(), vertices.end());
+
+        auto indices = shape.getIndices();
+        m_indices.insert(m_indices.end(), indices.begin(), indices.end());
+
+        m_shapes.emplace_back(std::move(shape));
     }
 
     std::vector<const char*> getRequiredExtensions() {
@@ -343,44 +400,30 @@ private:
     }
 
     void createVertexBuffer() {
-		auto vertices = Cube::getVertices();
-
         vk::BufferCreateInfo bufferInfo{};
-        bufferInfo.size = sizeof(vertices[0]) * vertices.size();
+        bufferInfo.size = sizeof(m_vertices[0]) * m_vertices.size();
         bufferInfo.usage = vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst;
 
 		m_vertexBuffer = m_gfx.makeBuffer(bufferInfo, vk::MemoryPropertyFlagBits::eDeviceLocal);
-		m_gfx.updateBuffer(m_vertexBuffer, vertices);
+		m_gfx.updateBuffer(m_vertexBuffer, m_vertices);
 	}
 
     void createIndexBuffer() {
-		auto indices = Cube::getIndices();
-
         vk::BufferCreateInfo bufferInfo{};
-        bufferInfo.size = sizeof(indices[0]) * indices.size();
+        bufferInfo.size = sizeof(m_indices[0]) * m_indices.size();
         bufferInfo.usage = vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst;
         
 		m_indexBuffer = m_gfx.makeBuffer(bufferInfo, vk::MemoryPropertyFlagBits::eDeviceLocal);
-		m_gfx.updateBuffer(m_indexBuffer, indices);
+		m_gfx.updateBuffer(m_indexBuffer, m_indices);
     }
 
     void createIndirectBuffer() {
-        auto indices = Cube::getIndices();
-
-        const vk::DrawIndexedIndirectCommand drawCmd = {
-            static_cast<uint32_t>(indices.size()), // indexCount
-            1, // instanceCount
-            0, // firstIndex
-            0, // vertexOffset
-            0  // firstInstance
-        };
-
         vk::BufferCreateInfo bufferInfo{};
-        bufferInfo.size = sizeof(drawCmd);
+        bufferInfo.size = sizeof(m_drawCmds[0]) * m_drawCmds.size();
         bufferInfo.usage = vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst;
         
 		m_indirectBuffer = m_gfx.makeBuffer(bufferInfo, vk::MemoryPropertyFlagBits::eDeviceLocal);
-		m_gfx.updateBuffer(m_indirectBuffer, drawCmd);
+		m_gfx.updateBuffer(m_indirectBuffer, m_drawCmds);
 	}
 
     void createUniformBuffers() {
@@ -404,15 +447,12 @@ private:
 
     void createStorageBuffer() {
         vk::BufferCreateInfo bufferInfo{};
-        bufferInfo.size = sizeof(StorageBufferObject);
+        bufferInfo.size = sizeof(m_shapes[0]) * m_shapes.size();
         bufferInfo.usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst;
 
 		m_storageBuffer = m_gfx.makeBuffer(bufferInfo, vk::MemoryPropertyFlagBits::eDeviceLocal);
 
-		StorageBufferObject ssboData{};
-		ssboData.colour = glm::vec3(1.0f, 1.0f, 0.0f);
-
-		m_gfx.updateBuffer(m_storageBuffer, ssboData);
+		m_gfx.updateBuffer(m_storageBuffer, m_shapes);
     }
 
     void createDescriptorPool() {
@@ -449,7 +489,7 @@ private:
         vk::DescriptorBufferInfo storageBufferInfo{};
         storageBufferInfo.buffer = m_storageBuffer;
         storageBufferInfo.offset = 0;
-        storageBufferInfo.range = sizeof(StorageBufferObject);
+        storageBufferInfo.range = VK_WHOLE_SIZE;
 
         for (uint8_t i = 0; i < maxFramesInFlight; i++) {
             vk::DescriptorBufferInfo uboBufferInfo{};
