@@ -302,18 +302,6 @@ private:
         m_graphicsPipeline = vk::raii::Pipeline(m_gfx.getDevice(), nullptr, pipelineInfo);
     }
 
-    uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) {
-        auto memProperties = m_gfx.getPhysicalDevice().getMemoryProperties();
-
-        for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
-            if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
-                return i;
-            }
-        }
-
-        throw std::runtime_error("failed to find suitable memory type!");
-    }
-
     void createTextureImage() {
         int texWidth, texHeight, texChannels;
         auto pixels = stbi_load("Textures/statue.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
