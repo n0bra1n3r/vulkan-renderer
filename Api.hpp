@@ -20,9 +20,11 @@ namespace Gfx
         const vk::raii::PhysicalDevice& getPhysicalDevice() const { return m_physicalDevice; }
         const vk::raii::Queue& getGraphicsQueue() const { return m_graphicsQueue; }
         vk::Format getSwapChainSurfaceFormat() const { return m_swapChainSurfaceFormat.format; }
+        vk::Format getSwapChainDepthFormat() const { return m_swapChainDepthFormat; }
         vk::Extent2D getSwapChainExtent() const { return m_swapChainExtent; }
         uint8_t getMaxFramesInFlight() const { return m_maxFramesInFlight; }
-        const vk::raii::ImageView& getSwapChainImageView(size_t index) const { return m_swapChainImageViews[index]; }
+        const vk::raii::ImageView& getSwapChainColorImageView(size_t index) const { return m_swapChainColorImageViews[index]; }
+        const vk::raii::ImageView& getSwapChainDepthImageView(size_t index) const { return m_swapChainDepthImageViews[index]; }
         const vk::raii::CommandPool& getCommandPool() const { return m_commandPool; }
         const std::unique_ptr<Gfx::RenderGraph>& getRenderGraph() const { return m_renderGraph; }
 
@@ -69,10 +71,14 @@ namespace Gfx
         vk::raii::Queue m_presentQueue = nullptr;
         vk::raii::SurfaceKHR m_surface = nullptr;
         vk::SurfaceFormatKHR m_swapChainSurfaceFormat{};
+		vk::Format m_swapChainDepthFormat{};
         vk::Extent2D m_swapChainExtent{};
         vk::raii::SwapchainKHR m_swapChain = nullptr;
-        std::vector<vk::Image> m_swapChainImages{};
-        std::vector<vk::raii::ImageView> m_swapChainImageViews{};
+        std::vector<vk::Image> m_swapChainColorImages{};
+        std::vector<vk::raii::ImageView> m_swapChainColorImageViews{};
+        std::vector<vk::raii::Image> m_swapChainDepthImages{};
+        std::vector<vk::raii::DeviceMemory> m_swapChainDepthImageMemories{};
+        std::vector<vk::raii::ImageView> m_swapChainDepthImageViews{};
         uint8_t m_maxFramesInFlight = 0;
         vk::raii::CommandPool m_commandPool = nullptr;
 

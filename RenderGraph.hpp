@@ -25,23 +25,31 @@ namespace Gfx
         using RecordFunc = std::function<void(const vk::raii::CommandBuffer&, uint32_t)>;
         RecordFunc recordFunc;
 
-        // Simple image-layout transition requirements for the primary color attachment used by the pass.
-        // If no transition is needed, set oldLayout == newLayout.
-        vk::ImageLayout oldLayout = vk::ImageLayout::eUndefined;
-        vk::ImageLayout newLayout = vk::ImageLayout::eUndefined;
+        struct AttachmentTransitionInfo
+        {
+            // Simple image-layout transition requirements for the attachments used by the pass.
+            // If no transition is needed, set oldLayout == newLayout.
+            vk::ImageLayout oldLayout = vk::ImageLayout::eUndefined;
+            vk::ImageLayout newLayout = vk::ImageLayout::eUndefined;
 
-        // Access & stage masks for the barrier that moves image from oldLayout->newLayout
-        vk::AccessFlags2 srcAccessMask = {};
-        vk::AccessFlags2 dstAccessMask = {};
-        vk::PipelineStageFlags2 srcStageMask = {};
-        vk::PipelineStageFlags2 dstStageMask = {};
+            // Access & stage masks for the barrier that moves image from oldLayout->newLayout
+            vk::AccessFlags2 srcAccessMask = {};
+            vk::AccessFlags2 dstAccessMask = {};
+            vk::PipelineStageFlags2 srcStageMask = {};
+            vk::PipelineStageFlags2 dstStageMask = {};
+        };
+
+        AttachmentTransitionInfo colorTransitionInfo;
+        AttachmentTransitionInfo depthTransitionInfo;
     };
 
     class RenderGraph
     {
     public:
-        RenderGraph(vk::raii::Device& device,
+        RenderGraph(
+            vk::raii::Device& device,
             vk::raii::SwapchainKHR& swapchain,
+			std::vector<vk::raii::Image>& swapchainDepthImages,
             vk::raii::Queue& graphicsQueue,
             vk::raii::Queue& presentQueue,
             vk::raii::CommandPool& commandPool);
@@ -66,7 +74,8 @@ namespace Gfx
         vk::raii::Queue& m_presentQueue;
         vk::raii::CommandPool& m_commandPool;
 
-        std::vector<vk::Image> m_swapchainImages;
+        std::vector<vk::Image> m_swapchainColorImages;
+        std::vector<vk::Image> m_swapchainDepthImages;
         std::vector<RenderPassNode> m_passes;
         std::vector<vk::raii::CommandBuffer> m_commandBuffers;
         std::vector<vk::raii::Semaphore> m_presentCompleteSemaphores;

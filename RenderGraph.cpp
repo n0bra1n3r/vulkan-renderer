@@ -1,13 +1,23 @@
 #include "RenderGraph.hpp"
 
-Gfx::RenderGraph::RenderGraph(vk::raii::Device& device, vk::raii::SwapchainKHR& swapchain, vk::raii::Queue& graphicsQueue, vk::raii::Queue& presentQueue, vk::raii::CommandPool& commandPool)
+Gfx::RenderGraph::RenderGraph(
+    vk::raii::Device& device, 
+    vk::raii::SwapchainKHR& swapchain,
+    std::vector<vk::raii::Image>& swapchainDepthImages,
+    vk::raii::Queue& graphicsQueue, 
+    vk::raii::Queue& presentQueue, 
+    vk::raii::CommandPool& commandPool)
     : m_device(device),
-    m_swapchain(swapchain),
-    m_graphicsQueue(graphicsQueue),
-    m_presentQueue(presentQueue),
-    m_commandPool(commandPool)
+      m_swapchain(swapchain),
+      m_graphicsQueue(graphicsQueue),
+      m_presentQueue(presentQueue),
+      m_commandPool(commandPool)
 {
-    m_swapchainImages = m_swapchain.getImages();
+	m_swapchainColorImages = m_swapchain.getImages();
+
+    for (auto& depthImage : swapchainDepthImages) {
+        m_swapchainDepthImages.push_back(*depthImage);
+	}
 }
 
 void Gfx::RenderGraph::addPass(Gfx::RenderPassNode const& node)
@@ -17,7 +27,7 @@ void Gfx::RenderGraph::addPass(Gfx::RenderPassNode const& node)
 
 void Gfx::RenderGraph::init()
 {
-    m_imageCount = static_cast<uint32_t>(m_swapchainImages.size());
+    m_imageCount = static_cast<uint32_t>(m_swapchainColorImages.size());
     if (m_imageCount == 0) throw std::runtime_error("Swapchain has zero images");
 
     // allocate one command buffer per swapchain image (common simple approach)
@@ -57,40 +67,61 @@ void Gfx::RenderGraph::executeFrame()
     auto& cmd = m_commandBuffers[frameIndex];
 
     // Wait for fence for this frame to be signaled (previous GPU work finished)
-    m_device.waitForFences(*inFlightFence, VK_TRUE, UINT64_MAX);
+    m_device.waitForFences(*inFlightFence, true, UINT64_MAX);
 
     // Acquire next image
     auto acquireResult = m_swapchain.acquireNextImage(UINT64_MAX, *presentComplete, nullptr);
-    uint32_t imageIndex = acquireResult.second;
+    auto imageIndex = acquireResult.second;
 
     // reset command buffer for this image
-    cmd.begin(vk::CommandBufferBeginInfo{ vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
+    cmd.begin({ vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
+
+	std::vector<vk::ImageMemoryBarrier2> barriers{};
+	barriers.reserve(2);
 
     // For each pass, optionally insert an image layout transition, then call the user record callback.
     // We assume all passes render to the swapchain color image directly.
     for (auto const& pass : m_passes)
     {
         // If requested, issue an ImageMemoryBarrier2 via pipelineBarrier2 (synchronization2)
-        if (pass.oldLayout != pass.newLayout)
-        {
-            vk::ImageMemoryBarrier2 barrier{};
-            barrier.srcStageMask = pass.srcStageMask;
-            barrier.srcAccessMask = pass.srcAccessMask;
-            barrier.dstStageMask = pass.dstStageMask;
-            barrier.dstAccessMask = pass.dstAccessMask;
-            barrier.oldLayout = pass.oldLayout;
-            barrier.newLayout = pass.newLayout;
+        if (pass.colorTransitionInfo.oldLayout != pass.colorTransitionInfo.newLayout) {
+			vk::ImageMemoryBarrier2 barrier{};
+            barrier.srcStageMask = pass.colorTransitionInfo.srcStageMask;
+            barrier.srcAccessMask = pass.colorTransitionInfo.srcAccessMask;
+            barrier.dstStageMask = pass.colorTransitionInfo.dstStageMask;
+            barrier.dstAccessMask = pass.colorTransitionInfo.dstAccessMask;
+            barrier.oldLayout = pass.colorTransitionInfo.oldLayout;
+            barrier.newLayout = pass.colorTransitionInfo.newLayout;
             barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            barrier.image = m_swapchainImages[imageIndex];
+            barrier.image = m_swapchainColorImages[imageIndex];
             barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
             barrier.subresourceRange.levelCount = 1;
             barrier.subresourceRange.layerCount = 1;
+			barriers.emplace_back(std::move(barrier));
+        }
 
+        if (pass.depthTransitionInfo.oldLayout != pass.depthTransitionInfo.newLayout) {
+            vk::ImageMemoryBarrier2 barrier{};
+            barrier.srcStageMask = pass.depthTransitionInfo.srcStageMask;
+            barrier.srcAccessMask = pass.depthTransitionInfo.srcAccessMask;
+            barrier.dstStageMask = pass.depthTransitionInfo.dstStageMask;
+            barrier.dstAccessMask = pass.depthTransitionInfo.dstAccessMask;
+            barrier.oldLayout = pass.depthTransitionInfo.oldLayout;
+            barrier.newLayout = pass.depthTransitionInfo.newLayout;
+            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.image = m_swapchainDepthImages[imageIndex];
+            barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eDepth;
+            barrier.subresourceRange.levelCount = 1;
+            barrier.subresourceRange.layerCount = 1;
+            barriers.emplace_back(std::move(barrier));
+        }
+
+        if (barriers.size()) {
             vk::DependencyInfo dependencyInfo{};
-            dependencyInfo.imageMemoryBarrierCount = 1;
-            dependencyInfo.pImageMemoryBarriers = &barrier;
-
+            dependencyInfo.imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size());
+            dependencyInfo.pImageMemoryBarriers = barriers.data();
             cmd.pipelineBarrier2(dependencyInfo);
         }
 

@@ -178,6 +178,34 @@ static void transitionImageLayout(const vk::raii::CommandBuffer& commandBuffer, 
     commandBuffer.pipelineBarrier(sourceStage, destinationStage, {}, {}, nullptr, barrier);
 }
 
+static vk::Format findSupportedFormat(
+    const vk::raii::PhysicalDevice& physicalDevice, 
+    const std::vector<vk::Format>& candidates, 
+    vk::ImageTiling tiling, 
+    vk::FormatFeatureFlags features)
+{
+    for (const auto format : candidates) {
+        auto props = physicalDevice.getFormatProperties(format);
+        if (tiling == vk::ImageTiling::eLinear && (props.linearTilingFeatures & features) == features) {
+            return format;
+        }
+        if (tiling == vk::ImageTiling::eOptimal && (props.optimalTilingFeatures & features) == features) {
+            return format;
+        }
+    }
+
+    throw std::runtime_error("failed to find supported format!");
+}
+
+static vk::Format findDepthFormat(const vk::raii::PhysicalDevice& physicalDevice) {
+    return findSupportedFormat(
+        physicalDevice,
+        { vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint },
+        vk::ImageTiling::eOptimal,
+        vk::FormatFeatureFlagBits::eDepthStencilAttachment
+    );
+}
+
 void Gfx::Api::init(const std::string& appName, const std::vector<const char*>& extensions, void* window) {
     createInstance(appName, extensions);
     createSurface(window);
@@ -352,8 +380,36 @@ void Gfx::Api::createSwapChain(void* window) {
     }
 
     m_swapChain = vk::raii::SwapchainKHR(m_device, swapChainCreateInfo);
-    m_swapChainImages = m_swapChain.getImages();
-	m_maxFramesInFlight = static_cast<uint8_t>(m_swapChainImages.size());
+    m_swapChainColorImages = m_swapChain.getImages();
+	m_maxFramesInFlight = static_cast<uint8_t>(m_swapChainColorImages.size());
+
+	m_swapChainDepthFormat = findDepthFormat(m_physicalDevice);
+
+    for (size_t i = 0; i < m_maxFramesInFlight; i++) {
+        vk::ImageCreateInfo depthImageInfo{};
+        depthImageInfo.imageType = vk::ImageType::e2D;
+        depthImageInfo.format = m_swapChainDepthFormat;
+        depthImageInfo.extent.width = m_swapChainExtent.width;
+        depthImageInfo.extent.height = m_swapChainExtent.height;
+        depthImageInfo.extent.depth = 1;
+        depthImageInfo.mipLevels = 1;
+        depthImageInfo.arrayLayers = 1;
+        depthImageInfo.usage = vk::ImageUsageFlagBits::eDepthStencilAttachment;
+        auto depthImage = vk::raii::Image(m_device, depthImageInfo);
+
+        auto memRequirements = depthImage.getMemoryRequirements();
+
+        vk::MemoryAllocateInfo allocInfo{};
+        allocInfo.allocationSize = memRequirements.size;
+        allocInfo.memoryTypeIndex = findMemoryType(m_physicalDevice, memRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
+
+        auto depthImageMemory = vk::raii::DeviceMemory(m_device, allocInfo);
+
+        depthImage.bindMemory(depthImageMemory, 0);
+
+        m_swapChainDepthImages.emplace_back(std::move(depthImage));
+		m_swapChainDepthImageMemories.emplace_back(std::move(depthImageMemory));
+    }
 }
 
 void Gfx::Api::createImageViews() {
@@ -365,9 +421,18 @@ void Gfx::Api::createImageViews() {
     imageViewCreateInfo.subresourceRange.levelCount = 1;
     imageViewCreateInfo.subresourceRange.layerCount = 1;
 
-    for (auto image : m_swapChainImages) {
+    for (auto& image : m_swapChainColorImages) {
         imageViewCreateInfo.image = image;
-        m_swapChainImageViews.emplace_back(m_device, imageViewCreateInfo);
+        m_swapChainColorImageViews.emplace_back(m_device, imageViewCreateInfo);
+    }
+
+    imageViewCreateInfo.format = m_swapChainDepthFormat;
+    imageViewCreateInfo.subresourceRange = { vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1 };
+    imageViewCreateInfo.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eDepth;
+
+    for (auto& image : m_swapChainDepthImages) {
+        imageViewCreateInfo.image = image;
+        m_swapChainDepthImageViews.emplace_back(m_device, imageViewCreateInfo);
     }
 }
 
@@ -382,7 +447,7 @@ void Gfx::Api::createCommandPool() {
 void Gfx::Api::initRenderGraph()
 {
     // construct the render graph (holds references, does NOT copy objects)
-    m_renderGraph.reset(new RenderGraph(m_device, m_swapChain, m_graphicsQueue, m_presentQueue, m_commandPool));
+    m_renderGraph.reset(new RenderGraph(m_device, m_swapChain, m_swapChainDepthImages, m_graphicsQueue, m_presentQueue, m_commandPool));
 }
 
 Gfx::Buffer Gfx::Api::makeBuffer(const vk::BufferCreateInfo& bufferInfo, vk::MemoryPropertyFlags memProperties)
