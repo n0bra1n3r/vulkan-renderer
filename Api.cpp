@@ -28,7 +28,11 @@ const std::vector<const char*> deviceExtensions = {
     vk::KHRSwapchainExtensionName,
     vk::KHRSpirv14ExtensionName,
     vk::KHRSynchronization2ExtensionName,
-    vk::KHRCreateRenderpass2ExtensionName
+    vk::KHRCreateRenderpass2ExtensionName,
+    vk::KHRAccelerationStructureExtensionName,
+    vk::KHRDeferredHostOperationsExtensionName,
+    vk::KHRBufferDeviceAddressExtensionName,
+    vk::KHRRayQueryExtensionName,
 };
 
 static std::tuple<uint32_t, uint32_t> findQueueFamilies(const vk::raii::PhysicalDevice& physicalDevice, const vk::raii::SurfaceKHR& surface) {
@@ -325,18 +329,32 @@ void Gfx::Api::createLogicalDevice() {
 
     vk::PhysicalDeviceFeatures2 features2{};
     features2.features.samplerAnisotropy = true;
+
+    vk::PhysicalDeviceVulkan12Features vulkan12Features{};
+    vulkan12Features.bufferDeviceAddress = true;
+
     vk::PhysicalDeviceVulkan13Features vulkan13Features{};
     vulkan13Features.dynamicRendering = true; // Enable dynamic rendering from Vulkan 1.3
     vulkan13Features.synchronization2 = true; // enable synchronization2 from the extension
+
     vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT extDynamicStateFeatures{};
     extDynamicStateFeatures.extendedDynamicState = true; // Enable extended dynamic state from the extension
+
+    vk::PhysicalDeviceAccelerationStructureFeaturesKHR accelStructFeatures{};
+    accelStructFeatures.accelerationStructure = true;
+
+    vk::PhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures{};
+    rayQueryFeatures.rayQuery = true;
 
     // Create a chain of feature structures
     auto featureChain = vk::StructureChain<
         vk::PhysicalDeviceFeatures2,
+        vk::PhysicalDeviceVulkan12Features,
         vk::PhysicalDeviceVulkan13Features,
-        vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>
-    { features2, vulkan13Features, extDynamicStateFeatures };
+        vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT,
+        vk::PhysicalDeviceAccelerationStructureFeaturesKHR,
+        vk::PhysicalDeviceRayQueryFeaturesKHR>
+    { features2, vulkan12Features, vulkan13Features, extDynamicStateFeatures, accelStructFeatures, rayQueryFeatures };
 
     vk::DeviceCreateInfo deviceCreateInfo{};
     deviceCreateInfo.pNext = &featureChain.get<vk::PhysicalDeviceFeatures2>();
@@ -460,6 +478,12 @@ Gfx::Buffer Gfx::Api::makeBuffer(const vk::BufferCreateInfo& bufferInfo, vk::Mem
     allocInfo.allocationSize = memRequirements.size;
     allocInfo.memoryTypeIndex = findMemoryType(m_physicalDevice, memRequirements.memoryTypeBits, memProperties);
 
+    vk::MemoryAllocateFlagsInfo allocFlagsInfo{};
+    if (bufferInfo.usage & vk::BufferUsageFlagBits::eShaderDeviceAddress) {
+        allocFlagsInfo.flags = vk::MemoryAllocateFlagBits::eDeviceAddress;
+        allocInfo.pNext = &allocFlagsInfo;
+    }
+
     vk::raii::DeviceMemory bufferMemory(m_device, allocInfo);
 
     buffer.bindMemory(bufferMemory, 0);
@@ -565,4 +589,26 @@ vk::raii::ImageView Gfx::Api::makeImageView(const Gfx::Image& image) {
     viewInfo.format = image.m_format;
     viewInfo.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
     return vk::raii::ImageView(m_device, viewInfo);
+}
+
+void Gfx::Api::buildAccelerationStructures(
+    const std::vector<vk::AccelerationStructureBuildGeometryInfoKHR>& geometryInfos, 
+    const std::vector<vk::AccelerationStructureBuildRangeInfoKHR*>& rangeInfos) 
+{
+    vk::CommandBufferAllocateInfo allocInfo{};
+    allocInfo.commandPool = m_commandPool;
+    allocInfo.level = vk::CommandBufferLevel::ePrimary;
+    allocInfo.commandBufferCount = 1;
+
+    auto commandBlasBuildBuffer = std::move(m_device.allocateCommandBuffers(allocInfo).front());
+    commandBlasBuildBuffer.begin({ vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
+	commandBlasBuildBuffer.buildAccelerationStructuresKHR(geometryInfos, rangeInfos);
+    commandBlasBuildBuffer.end();
+
+    vk::SubmitInfo submitInfo{};
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &*commandBlasBuildBuffer;
+
+    m_graphicsQueue.submit(submitInfo, nullptr);
+    m_graphicsQueue.waitIdle();
 }

@@ -9,7 +9,8 @@ struct VertexOutput
 {
     float4 sv_position : SV_Position;
     float4 tint : COLOR0;
-    float2 texCoord : TEXCOORD0;
+    float4 worldPos : TEXCOORD0;
+    float2 texCoord : TEXCOORD1;
 };
 
 struct UniformBuffer
@@ -40,6 +41,7 @@ VertexOutput main(VertexInput input)
     float4 viewPos = mul(ubo.view, worldPos);
     output.sv_position = mul(ubo.proj, viewPos);
     output.tint = instanceData.tint;
+    output.worldPos = worldPos;
     output.texCoord = input.texCoord;
     return output;
 }

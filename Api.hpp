@@ -50,6 +50,10 @@ namespace Gfx
             updateImage(image, data.data(), data.size() * sizeof(T));
         }
 
+        void buildAccelerationStructures(
+            const std::vector<vk::AccelerationStructureBuildGeometryInfoKHR>& geometryInfos, 
+            const std::vector<vk::AccelerationStructureBuildRangeInfoKHR*>& rangeInfos);
+
     private:
         void createInstance(const std::string& appName, const std::vector<const char*>& extensions);
         void createSurface(void* window);

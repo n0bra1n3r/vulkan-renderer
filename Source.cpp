@@ -153,6 +153,13 @@ private:
 	std::vector<Shape> m_shapes{};
     std::vector<VkDrawIndexedIndirectCommand> m_drawCmds{};
 
+	std::vector<Gfx::Buffer> m_blasBuffers{};
+    std::vector<vk::raii::AccelerationStructureKHR> m_blasHandles{};
+	std::vector<vk::AccelerationStructureInstanceKHR> m_accelInstances{};
+	Gfx::Buffer m_accelInstanceBuffer = nullptr;
+	Gfx::Buffer m_tlasBuffer = nullptr;
+	vk::raii::AccelerationStructureKHR m_tlasHandle = nullptr;
+
     void initWindow() {
         glfwInit();
 
@@ -176,6 +183,7 @@ private:
         createIndirectBuffer();
         createUniformBuffers();
         createStorageBuffer();
+        createAccelerationStructures();
 		createDescriptorPool();
         createDescriptorSets();
 
@@ -183,7 +191,7 @@ private:
     }
 
     void loadShapes() {
-        addShape<Cube>(glm::vec3(-0.5, 0.25, 1), glm::quat(1, 0, 0, 0), glm::vec3(1), glm::vec4(0, 1, 0, 1));
+        addShape<Cube>(glm::vec3(-0.5, 0.25, 1), glm::quat(1, 0, 0, 0), glm::vec3(1), glm::vec4(1));
         addShape<Cube>(glm::vec3(0.5, 0, 0), glm::quat(1, 0, 0, 0), glm::vec3(1), glm::vec4(1, 0, 0, 1));
     }
 
@@ -238,8 +246,9 @@ private:
         vk::DescriptorSetLayoutBinding uboLayoutBinding(0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr);
         vk::DescriptorSetLayoutBinding ssboLayoutBinding(1, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr);
         vk::DescriptorSetLayoutBinding samplerLayoutBinding(2, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr);
+        vk::DescriptorSetLayoutBinding accelStructBinding(3, vk::DescriptorType::eAccelerationStructureKHR, 1, vk::ShaderStageFlagBits::eFragment, nullptr);
 
-        std::array<vk::DescriptorSetLayoutBinding, 3> bindings = { uboLayoutBinding, ssboLayoutBinding, samplerLayoutBinding };
+        std::array<vk::DescriptorSetLayoutBinding, 4> bindings = { uboLayoutBinding, ssboLayoutBinding, samplerLayoutBinding, accelStructBinding };
 
         vk::DescriptorSetLayoutCreateInfo layoutInfo{};
         layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
@@ -410,7 +419,11 @@ private:
     void createVertexBuffer() {
         vk::BufferCreateInfo bufferInfo{};
         bufferInfo.size = sizeof(m_vertices[0]) * m_vertices.size();
-        bufferInfo.usage = vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst;
+        bufferInfo.usage =
+            vk::BufferUsageFlagBits::eVertexBuffer | 
+            vk::BufferUsageFlagBits::eTransferDst |
+            vk::BufferUsageFlagBits::eShaderDeviceAddress |
+            vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
 
 		m_vertexBuffer = m_gfx.makeBuffer(bufferInfo, vk::MemoryPropertyFlagBits::eDeviceLocal);
 		m_gfx.updateBuffer(m_vertexBuffer, m_vertices);
@@ -419,7 +432,11 @@ private:
     void createIndexBuffer() {
         vk::BufferCreateInfo bufferInfo{};
         bufferInfo.size = sizeof(m_indices[0]) * m_indices.size();
-        bufferInfo.usage = vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst;
+        bufferInfo.usage = 
+            vk::BufferUsageFlagBits::eIndexBuffer | 
+            vk::BufferUsageFlagBits::eTransferDst |
+            vk::BufferUsageFlagBits::eShaderDeviceAddress |
+            vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
         
 		m_indexBuffer = m_gfx.makeBuffer(bufferInfo, vk::MemoryPropertyFlagBits::eDeviceLocal);
 		m_gfx.updateBuffer(m_indexBuffer, m_indices);
@@ -463,8 +480,164 @@ private:
 		m_gfx.updateBuffer(m_storageBuffer, m_shapes);
     }
 
+    void createAccelerationStructures() {
+        auto vertexAddr = m_gfx.getDevice().getBufferAddressKHR({ *m_vertexBuffer });
+        auto indexAddr = m_gfx.getDevice().getBufferAddressKHR({ *m_indexBuffer });
+
+		auto vertices = Cube::getVertices();
+		auto indices = Cube::getIndices();
+
+        vk::TransformMatrixKHR identity{};
+        identity.matrix = std::array<std::array<float, 4>, 3>{ {std::array<float, 4>{1.f, 0.f, 0.f, 0.f},
+                                                               std::array<float, 4>{0.f, 1.f, 0.f, 0.f},
+                                                               std::array<float, 4>{0.f, 0.f, 1.f, 0.f}} };
+
+        for (size_t i = 0; i < m_shapes.size(); i++) {
+            vk::AccelerationStructureGeometryTrianglesDataKHR trianglesData{};
+            trianglesData.vertexFormat = vk::Format::eR32G32B32Sfloat;
+            trianglesData.vertexData = vertexAddr;
+            trianglesData.vertexStride = sizeof(Vertex);
+            trianglesData.maxVertex = vertices.size();
+            trianglesData.indexType = vk::IndexType::eUint32;
+            trianglesData.indexData = indexAddr;
+
+            vk::AccelerationStructureGeometryDataKHR geometryData(trianglesData);
+
+            vk::AccelerationStructureGeometryKHR blasGeometry{};
+            blasGeometry.geometryType = vk::GeometryTypeKHR::eTriangles;
+            blasGeometry.geometry = geometryData;
+            blasGeometry.flags = vk::GeometryFlagBitsKHR::eOpaque;
+
+            vk::AccelerationStructureBuildGeometryInfoKHR blasBuildGeometryInfo{};
+            blasBuildGeometryInfo.type = vk::AccelerationStructureTypeKHR::eBottomLevel;
+            blasBuildGeometryInfo.mode = vk::BuildAccelerationStructureModeKHR::eBuild;
+            blasBuildGeometryInfo.geometryCount = 1;
+            blasBuildGeometryInfo.pGeometries = &blasGeometry;
+
+            auto primitiveCount = static_cast<uint32_t>(indices.size() / 3);
+
+            vk::AccelerationStructureBuildSizesInfoKHR blasBuildSizes =
+                m_gfx.getDevice().getAccelerationStructureBuildSizesKHR(
+                    vk::AccelerationStructureBuildTypeKHR::eDevice,
+                    blasBuildGeometryInfo,
+                    { primitiveCount });
+
+            vk::BufferCreateInfo scratchBufferInfo{};
+            scratchBufferInfo.size = blasBuildSizes.buildScratchSize;
+            scratchBufferInfo.usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress;
+
+            auto scratchBuffer = m_gfx.makeBuffer(scratchBufferInfo, vk::MemoryPropertyFlagBits::eDeviceLocal);
+
+            blasBuildGeometryInfo.scratchData.deviceAddress = m_gfx.getDevice().getBufferAddressKHR({ *scratchBuffer });
+
+            vk::BufferCreateInfo blasBufferInfo{};
+            blasBufferInfo.size = blasBuildSizes.accelerationStructureSize;
+            blasBufferInfo.usage = 
+                vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR |
+                vk::BufferUsageFlagBits::eShaderDeviceAddress |
+                vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
+
+			m_blasBuffers.emplace_back(m_gfx.makeBuffer(blasBufferInfo, vk::MemoryPropertyFlagBits::eDeviceLocal));
+
+            vk::AccelerationStructureCreateInfoKHR blasCreateInfo{};
+            blasCreateInfo.buffer = m_blasBuffers[i];
+            blasCreateInfo.offset = 0;
+            blasCreateInfo.size = blasBuildSizes.accelerationStructureSize;
+            blasCreateInfo.type = vk::AccelerationStructureTypeKHR::eBottomLevel;
+
+            m_blasHandles.emplace_back(m_gfx.getDevice().createAccelerationStructureKHR(blasCreateInfo));
+
+            blasBuildGeometryInfo.dstAccelerationStructure = m_blasHandles[i];
+
+            vk::AccelerationStructureBuildRangeInfoKHR blasRangeInfo{};
+            blasRangeInfo.primitiveCount = primitiveCount;
+
+			m_gfx.buildAccelerationStructures({ blasBuildGeometryInfo }, { &blasRangeInfo });
+
+            auto blasDeviceAddr = m_gfx.getDevice().getAccelerationStructureAddressKHR({ *m_blasHandles[i] });
+
+            vk::AccelerationStructureInstanceKHR instance{};
+            instance.transform = identity;
+            instance.mask = 0xFF;
+            instance.accelerationStructureReference = blasDeviceAddr;
+
+            m_accelInstances.emplace_back(std::move(instance));
+        }
+
+		vk::BufferCreateInfo accelInstanceBufferInfo{};
+		accelInstanceBufferInfo.size = sizeof(m_accelInstances[0]) * m_accelInstances.size();
+        accelInstanceBufferInfo.usage = 
+            vk::BufferUsageFlagBits::eShaderDeviceAddress |
+            vk::BufferUsageFlagBits::eTransferDst |
+			vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
+
+        m_accelInstanceBuffer = m_gfx.makeBuffer(accelInstanceBufferInfo,
+			vk::MemoryPropertyFlagBits::eHostVisible | 
+            vk::MemoryPropertyFlagBits::eHostCoherent);
+
+		auto acellInstanceData = m_accelInstanceBuffer.map();
+        memcpy(acellInstanceData, m_accelInstances.data(), sizeof(m_accelInstances[0]) * m_accelInstances.size());
+		m_accelInstanceBuffer.unmap();
+
+        auto instanceAddr = m_gfx.getDevice().getBufferAddressKHR({ *m_accelInstanceBuffer });
+
+		vk::AccelerationStructureGeometryInstancesDataKHR instancesData{};
+        instancesData.data = instanceAddr;
+
+        vk::AccelerationStructureGeometryDataKHR geometryData(instancesData);
+
+        vk::AccelerationStructureGeometryKHR tlasGeometry{};
+        tlasGeometry.geometryType = vk::GeometryTypeKHR::eInstances;
+        tlasGeometry.geometry = geometryData;
+
+        vk::AccelerationStructureBuildGeometryInfoKHR tlasBuildGeometryInfo{};
+        tlasBuildGeometryInfo.type = vk::AccelerationStructureTypeKHR::eTopLevel;
+        tlasBuildGeometryInfo.mode = vk::BuildAccelerationStructureModeKHR::eBuild;
+        tlasBuildGeometryInfo.geometryCount = 1;
+        tlasBuildGeometryInfo.pGeometries = &tlasGeometry;
+
+        auto primitiveCount = static_cast<uint32_t>(m_accelInstances.size());
+
+        vk::AccelerationStructureBuildSizesInfoKHR tlasBuildSizes =
+            m_gfx.getDevice().getAccelerationStructureBuildSizesKHR(
+                vk::AccelerationStructureBuildTypeKHR::eDevice,
+                tlasBuildGeometryInfo,
+                { primitiveCount });
+
+        vk::BufferCreateInfo tlasScratchBufferInfo{};
+        tlasScratchBufferInfo.size = tlasBuildSizes.buildScratchSize;
+        tlasScratchBufferInfo.usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress;
+
+        auto tlasScratchBuffer = m_gfx.makeBuffer(tlasScratchBufferInfo, vk::MemoryPropertyFlagBits::eDeviceLocal);
+
+        tlasBuildGeometryInfo.scratchData.deviceAddress = m_gfx.getDevice().getBufferAddressKHR({ *tlasScratchBuffer });
+
+		vk::BufferCreateInfo tlasBufferInfo{};
+        tlasBufferInfo.size = tlasBuildSizes.accelerationStructureSize;
+        tlasBufferInfo.usage =
+            vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR |
+            vk::BufferUsageFlagBits::eShaderDeviceAddress |
+            vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
+
+        m_tlasBuffer = m_gfx.makeBuffer(tlasBufferInfo, vk::MemoryPropertyFlagBits::eDeviceLocal);
+
+        vk::AccelerationStructureCreateInfoKHR tlasCreateInfo{};
+        tlasCreateInfo.buffer = m_tlasBuffer;
+        tlasCreateInfo.size = tlasBuildSizes.accelerationStructureSize;
+        tlasCreateInfo.type = vk::AccelerationStructureTypeKHR::eTopLevel;
+
+        m_tlasHandle = m_gfx.getDevice().createAccelerationStructureKHR(tlasCreateInfo);
+
+        tlasBuildGeometryInfo.dstAccelerationStructure = m_tlasHandle;
+
+        vk::AccelerationStructureBuildRangeInfoKHR tlasRangeInfo{};
+		tlasRangeInfo.primitiveCount = primitiveCount;
+
+		m_gfx.buildAccelerationStructures({ tlasBuildGeometryInfo }, { &tlasRangeInfo });
+	}
+
     void createDescriptorPool() {
-		auto maxFramesInFlight = m_gfx.getMaxFramesInFlight();
+        auto maxFramesInFlight = m_gfx.getMaxFramesInFlight();
 
         std::array<vk::DescriptorPoolSize, 3> poolSizes = {
             vk::DescriptorPoolSize{ vk::DescriptorType::eUniformBuffer, maxFramesInFlight },
@@ -539,6 +712,20 @@ private:
             imageWrite.pImageInfo = &imageInfo;
 
             m_gfx.getDevice().updateDescriptorSets(imageWrite, {});
+
+            vk::WriteDescriptorSetAccelerationStructureKHR accelStructInfo{};
+            accelStructInfo.accelerationStructureCount = 1,
+                accelStructInfo.pAccelerationStructures = { &*m_tlasHandle };
+
+            vk::WriteDescriptorSet accelStructWrite{};
+            accelStructWrite.pNext = &accelStructInfo;
+            accelStructWrite.dstSet = m_descriptorSets[i];
+            accelStructWrite.dstBinding = 3;
+            accelStructWrite.dstArrayElement = 0;
+            accelStructWrite.descriptorCount = 1;
+            accelStructWrite.descriptorType = vk::DescriptorType::eAccelerationStructureKHR;
+
+            m_gfx.getDevice().updateDescriptorSets(accelStructWrite, {});
         }
     }
 
