@@ -1,14 +1,16 @@
 struct VertexInput
 {
-    float2 position : ATTRIB0;
+    float3 position : ATTRIB0;
     float2 texCoord : ATTRIB1;
+    uint instanceID : SV_InstanceID;
 };
 
 struct VertexOutput
 {
     float4 sv_position : SV_Position;
-    float3 colour : COLOR0;
-    float2 texCoord : TEXCOORD0;
+    float4 tint : COLOR0;
+    float4 worldPos : TEXCOORD0;
+    float2 texCoord : TEXCOORD1;
 };
 
 struct UniformBuffer
@@ -18,20 +20,28 @@ struct UniformBuffer
     float4x4 proj;
 };
 
-struct StorageBuffer
+struct InstanceData
 {
-    float3 colour;
+    float4x4 transform;
+    float4 tint;
+    int textureIndex;
 };
 
 ConstantBuffer<UniformBuffer> ubo : register(b0, space0);
 
-StructuredBuffer<StorageBuffer> ssbo : register(t1, space0);
+StructuredBuffer<InstanceData> ssbo : register(t1, space0);
 
 VertexOutput main(VertexInput input)
 {
+    InstanceData instanceData = ssbo[input.instanceID];
+    
     VertexOutput output;
-    output.sv_position = mul(ubo.proj, mul(ubo.view, mul(ubo.model, float4(input.position, 0.0, 1.0))));
-    output.colour = ssbo[0].colour;
+    float4 localPos = mul(ubo.model, float4(input.position, 1.0));
+    float4 worldPos = mul(instanceData.transform, localPos);
+    float4 viewPos = mul(ubo.view, worldPos);
+    output.sv_position = mul(ubo.proj, viewPos);
+    output.tint = instanceData.tint;
+    output.worldPos = worldPos;
     output.texCoord = input.texCoord;
     return output;
 }
