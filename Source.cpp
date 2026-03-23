@@ -14,6 +14,9 @@
 #define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtc/quaternion.hpp>
+#include <glm/gtx/quaternion.hpp>
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
@@ -49,7 +52,7 @@ constexpr const T& clamp(const T& v, const T& lo, const T& hi)
 
 struct Vertex
 {
-	glm::vec2 position;
+	glm::vec3 position;
     glm::vec2 texCoord;
 
     static vk::VertexInputBindingDescription getBindingDescription() {
@@ -61,7 +64,7 @@ struct Vertex
 
     static std::array<vk::VertexInputAttributeDescription, 2> getAttributeDescriptions() {
         return {
-            vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, position)),
+            vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, position)),
             vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, texCoord))
         };
     }
@@ -69,10 +72,10 @@ struct Vertex
 
 const std::vector<Vertex> vertices =
 {
-    {{-0.5, -0.5}, {1.0, 0.0}},
-    {{0.5, -0.5}, {0.0, 0.0}},
-    {{0.5, 0.5}, {0.0, 1.0}},
-    {{-0.5, 0.5}, {1.0, 1.0}}
+    {{-0.5, -0.5, 0.0}, {1.0, 0.0}},
+    {{0.5, -0.5, 0.0}, {0.0, 0.0}},
+    {{0.5, 0.5, 0.0}, {0.0, 1.0}},
+    {{-0.5, 0.5, 0.0}, {1.0, 1.0}}
 };
 
 const std::vector<uint32_t> indices =
@@ -82,7 +85,7 @@ const std::vector<uint32_t> indices =
 
 const vk::DrawIndexedIndirectCommand drawCmd = {
     static_cast<uint32_t>(indices.size()), // indexCount
-    1, // instanceCount
+    2, // instanceCount
     0, // firstIndex
     0, // vertexOffset
     0  // firstInstance
@@ -90,13 +93,14 @@ const vk::DrawIndexedIndirectCommand drawCmd = {
 
 struct UniformBufferObject
 {
-    glm::mat4 model;
     glm::mat4 view;
     glm::mat4 proj;
+	glm::quat rotation;
 };
 
 struct StorageBufferObject
 {
+    glm::mat4 model;
     glm::vec3 colour;
 };
 
@@ -879,7 +883,7 @@ private:
 
     void createStorageBuffer() {
         vk::BufferCreateInfo bufferInfo{};
-        bufferInfo.size = sizeof(StorageBufferObject);
+        bufferInfo.size = sizeof(StorageBufferObject) * drawCmd.instanceCount;
         bufferInfo.usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst;
 
         createBuffer(
@@ -889,9 +893,14 @@ private:
             storageBufferMemory);
 
 		StorageBufferObject ssboData{};
-		ssboData.colour = glm::vec3(1.0f, 1.0f, 0.0f);
+        ssboData.model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0, 0.0, 0.0));
+        ssboData.colour = glm::vec3(1.0f, 1.0f, 0.0f);
 
-        uploadBuffer(std::vector<StorageBufferObject>{ssboData}, storageBuffer);
+        StorageBufferObject ssboData1{};
+        ssboData1.model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0, 0.0, -0.5));
+        ssboData1.colour = glm::vec3(0.0f, 1.0f, 0.0f);
+
+        uploadBuffer(std::vector<StorageBufferObject>{ ssboData, ssboData1 }, storageBuffer);
     }
 
     void createDescriptorPool() {
@@ -1047,10 +1056,10 @@ private:
         float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
 
         UniformBufferObject ubo{};
-        ubo.model = rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
         ubo.view = lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
         ubo.proj = glm::perspective(glm::radians(45.0f), static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height), 0.1f, 10.0f);
         ubo.proj[1][1] *= -1;
+        ubo.rotation = glm::angleAxis(time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 
         memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
     }
