@@ -132,6 +132,11 @@ private:
     vk::raii::DescriptorSetLayout descriptorSetLayout = nullptr;
     vk::raii::PipelineLayout pipelineLayout = nullptr;
     vk::raii::Pipeline graphicsPipeline = nullptr;
+    vk::Format depthFormat{};
+    std::vector<vk::raii::Image> depthImageRefs{};
+    std::vector<vk::raii::DeviceMemory> depthImageMemories{};
+    std::vector<vk::Image> depthImages{};
+    std::vector<vk::raii::ImageView> depthImageViews{};
     vk::raii::Image textureImage = nullptr;
     vk::raii::DeviceMemory textureImageMemory = nullptr;
     vk::raii::ImageView textureImageView = nullptr;
@@ -176,6 +181,7 @@ private:
         createLogicalDevice();
         createSwapChain();
         createImageViews();
+        createDepthResources();
         createDescriptorSetLayout();
 		createGraphicsPipeline();
         createCommandPool();
@@ -479,6 +485,72 @@ private:
         }
     }
 
+    void createDepthResources()
+    {
+        depthFormat = findDepthFormat();
+
+        vk::ImageCreateInfo depthImageInfo{};
+        depthImageInfo.imageType = vk::ImageType::e2D;
+        depthImageInfo.format = depthFormat;
+        depthImageInfo.extent.width = swapChainExtent.width;
+        depthImageInfo.extent.height = swapChainExtent.height;
+        depthImageInfo.extent.depth = 1;
+        depthImageInfo.mipLevels = 1;
+        depthImageInfo.arrayLayers = 1;
+        depthImageInfo.usage = vk::ImageUsageFlagBits::eDepthStencilAttachment;
+
+        vk::ImageViewCreateInfo depthImageViewInfo{};
+        depthImageViewInfo.viewType = vk::ImageViewType::e2D;
+        depthImageViewInfo.format = depthFormat;
+        depthImageViewInfo.subresourceRange = { vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1 };
+        depthImageViewInfo.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eDepth;
+        depthImageViewInfo.subresourceRange.levelCount = 1;
+        depthImageViewInfo.subresourceRange.layerCount = 1;
+
+        for (size_t i = 0; i < swapChainImages.size(); i++) {
+            auto depthImage = vk::raii::Image(device, depthImageInfo);
+
+            depthImageViewInfo.image = depthImage;
+
+            auto memRequirements = depthImage.getMemoryRequirements();
+
+            vk::MemoryAllocateInfo allocInfo{};
+            allocInfo.allocationSize = memRequirements.size;
+            allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
+
+            auto depthImageMemory = vk::raii::DeviceMemory(device, allocInfo);
+
+            depthImage.bindMemory(depthImageMemory, 0);
+
+            depthImages.emplace_back(*depthImage);
+            depthImageRefs.emplace_back(std::move(depthImage));
+            depthImageMemories.emplace_back(std::move(depthImageMemory));
+            depthImageViews.emplace_back(device, depthImageViewInfo);
+        }
+    }
+
+    vk::Format findDepthFormat() {
+        std::vector<vk::Format> candidates = {
+            vk::Format::eD32Sfloat,
+            vk::Format::eD32SfloatS8Uint,
+            vk::Format::eD24UnormS8Uint
+        };
+        auto tiling = vk::ImageTiling::eOptimal;
+        auto features = vk::FormatFeatureFlagBits::eDepthStencilAttachment;
+
+        for (auto format : candidates) {
+            auto props = physicalDevice.getFormatProperties(format);
+            if (tiling == vk::ImageTiling::eLinear && (props.linearTilingFeatures & features) == features) {
+                return format;
+            }
+            if (tiling == vk::ImageTiling::eOptimal && (props.optimalTilingFeatures & features) == features) {
+                return format;
+            }
+        }
+
+        throw std::runtime_error("failed to find supported format!");
+    }
+
     static std::vector<char> readFile(const std::string& filename) {
         std::ifstream file(filename, std::ios::ate | std::ios::binary);
 
@@ -521,6 +593,7 @@ private:
         vk::PipelineRenderingCreateInfo pipelineRenderingCreateInfo{};
         pipelineRenderingCreateInfo.colorAttachmentCount = 1;
         pipelineRenderingCreateInfo.pColorAttachmentFormats = &swapChainSurfaceFormat.format;
+        pipelineRenderingCreateInfo.depthAttachmentFormat = depthFormat;
 
         auto fragCode = readFile("Shaders/main.frag.spv");
         auto vertCode = readFile("Shaders/main.vert.spv");
@@ -580,6 +653,11 @@ private:
         colorBlending.attachmentCount = 1;
         colorBlending.pAttachments = &colorBlendAttachment;
 
+        vk::PipelineDepthStencilStateCreateInfo depthStencil{};
+        depthStencil.depthTestEnable = true;
+        depthStencil.depthWriteEnable = true;
+        depthStencil.depthCompareOp = vk::CompareOp::eLess;
+
         vk::PipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.setLayoutCount = 1;
         pipelineLayoutInfo.pSetLayouts = &*descriptorSetLayout;
@@ -597,6 +675,7 @@ private:
         pipelineInfo.pRasterizationState = &rasterizer;
         pipelineInfo.pMultisampleState = &multisampling;
         pipelineInfo.pColorBlendState = &colorBlending;
+        pipelineInfo.pDepthStencilState = &depthStencil;
         pipelineInfo.layout = pipelineLayout;
 
         graphicsPipeline = vk::raii::Pipeline(device, nullptr, pipelineInfo);
@@ -987,12 +1066,22 @@ private:
         // Main rendering pass: transition Undefined -> ColorAttachmentOptimal and record in the pass
         RenderPassNode mainPass{};
         mainPass.name = "MainPass";
-        mainPass.oldLayout = vk::ImageLayout::eUndefined;
-        mainPass.newLayout = vk::ImageLayout::eColorAttachmentOptimal;
-        mainPass.srcAccessMask = {}; // from undefined
-        mainPass.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
-        mainPass.srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe;
-        mainPass.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+        RenderPassNode::AttachmentTransitionInfo mainColorTransition{ swapChainImages, vk::ImageAspectFlagBits::eColor };
+        mainColorTransition.oldLayout = vk::ImageLayout::eUndefined;
+        mainColorTransition.newLayout = vk::ImageLayout::eColorAttachmentOptimal;
+        mainColorTransition.srcAccessMask = {}; // from undefined
+        mainColorTransition.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
+        mainColorTransition.srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe;
+        mainColorTransition.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+        mainPass.transitionInfos.emplace_back(mainColorTransition);
+        RenderPassNode::AttachmentTransitionInfo mainDepthTransition{ depthImages, vk::ImageAspectFlagBits::eDepth };
+        mainDepthTransition.oldLayout = vk::ImageLayout::eUndefined;
+        mainDepthTransition.newLayout = vk::ImageLayout::eDepthAttachmentOptimal;
+        mainDepthTransition.srcAccessMask = {}; // from undefined
+        mainDepthTransition.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+        mainDepthTransition.srcStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests;
+        mainDepthTransition.dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests;
+		mainPass.transitionInfos.emplace_back(std::move(mainDepthTransition));
 
         // record the same rendering commands previously inside recordCommandBuffer (beginRendering, bind pipeline, draw, endRendering)
         mainPass.recordFunc = [this](vk::raii::CommandBuffer& cmd, uint32_t imageIndex)
@@ -1000,12 +1089,20 @@ private:
 			updateUniformBuffer(imageIndex);
 
             vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
-            vk::RenderingAttachmentInfo attachmentInfo{};
-            attachmentInfo.imageView = swapChainImageViews[imageIndex];
-            attachmentInfo.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
-            attachmentInfo.loadOp = vk::AttachmentLoadOp::eClear;
-            attachmentInfo.storeOp = vk::AttachmentStoreOp::eStore;
-            attachmentInfo.clearValue = clearColor;
+            vk::RenderingAttachmentInfo colorAttachmentInfo{};
+            colorAttachmentInfo.imageView = swapChainImageViews[imageIndex];
+            colorAttachmentInfo.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
+            colorAttachmentInfo.loadOp = vk::AttachmentLoadOp::eClear;
+            colorAttachmentInfo.storeOp = vk::AttachmentStoreOp::eStore;
+            colorAttachmentInfo.clearValue = clearColor;
+
+            vk::ClearValue clearDepth = vk::ClearDepthStencilValue(1, 0);
+            vk::RenderingAttachmentInfo depthAttachmentInfo{};
+            depthAttachmentInfo.imageView = depthImageViews[imageIndex];
+            depthAttachmentInfo.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
+            depthAttachmentInfo.loadOp = vk::AttachmentLoadOp::eClear;
+            depthAttachmentInfo.storeOp = vk::AttachmentStoreOp::eDontCare;
+            depthAttachmentInfo.clearValue = clearDepth;
 
             vk::RenderingInfo renderingInfo{};
             renderingInfo.renderArea.offset.x = 0;
@@ -1013,7 +1110,8 @@ private:
             renderingInfo.renderArea.extent = swapChainExtent;
             renderingInfo.layerCount = 1;
             renderingInfo.colorAttachmentCount = 1;
-            renderingInfo.pColorAttachments = &attachmentInfo;
+            renderingInfo.pColorAttachments = &colorAttachmentInfo;
+            renderingInfo.pDepthAttachment = &depthAttachmentInfo;
 
             cmd.beginRendering(renderingInfo);
             cmd.bindVertexBuffers(0, *vertexBuffer, { 0 });
@@ -1035,12 +1133,13 @@ private:
         // Final transition pass: move from color attachment -> present.
         RenderPassNode presentTransition{};
         presentTransition.name = "PresentTransition";
-        presentTransition.oldLayout = vk::ImageLayout::eColorAttachmentOptimal;
-        presentTransition.newLayout = vk::ImageLayout::ePresentSrcKHR;
-        presentTransition.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
-        presentTransition.dstAccessMask = {};
-        presentTransition.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
-        presentTransition.dstStageMask = vk::PipelineStageFlagBits2::eBottomOfPipe;
+        mainColorTransition.oldLayout = vk::ImageLayout::eColorAttachmentOptimal;
+        mainColorTransition.newLayout = vk::ImageLayout::ePresentSrcKHR;
+        mainColorTransition.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
+        mainColorTransition.dstAccessMask = {};
+        mainColorTransition.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+        mainColorTransition.dstStageMask = vk::PipelineStageFlagBits2::eBottomOfPipe;
+		presentTransition.transitionInfos.emplace_back(std::move(mainColorTransition));
         presentTransition.recordFunc = nullptr; // no recording, just a layout transition
 
         renderGraph->addPass(presentTransition);

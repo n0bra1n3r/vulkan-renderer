@@ -37,16 +37,24 @@ struct RenderPassNode
     using RecordFunc = std::function<void(vk::raii::CommandBuffer&, uint32_t)>;
     RecordFunc recordFunc;
 
-    // Simple image-layout transition requirements for the primary color attachment used by the pass.
-    // If no transition is needed, set oldLayout == newLayout.
-    vk::ImageLayout oldLayout = vk::ImageLayout::eUndefined;
-    vk::ImageLayout newLayout = vk::ImageLayout::eUndefined;
+    struct AttachmentTransitionInfo
+    {
+		const std::vector<vk::Image>& images; // images to transition (e.g. swapchain image for color, depth image for depth)
+		const vk::ImageAspectFlagBits aspectMask; // aspect of the image to transition (e.g. color, depth, stencil)
 
-    // Access & stage masks for the barrier that moves image from oldLayout->newLayout
-    vk::AccessFlags2 srcAccessMask = {};
-    vk::AccessFlags2 dstAccessMask = {};
-    vk::PipelineStageFlags2 srcStageMask = {};
-    vk::PipelineStageFlags2 dstStageMask = {};
+        // Simple image-layout transition requirements for the attachments used by the pass.
+        // If no transition is needed, set oldLayout == newLayout.
+        vk::ImageLayout oldLayout = vk::ImageLayout::eUndefined;
+        vk::ImageLayout newLayout = vk::ImageLayout::eUndefined;
+
+        // Access & stage masks for the barrier that moves image from oldLayout->newLayout
+        vk::AccessFlags2 srcAccessMask = {};
+        vk::AccessFlags2 dstAccessMask = {};
+        vk::PipelineStageFlags2 srcStageMask = {};
+        vk::PipelineStageFlags2 dstStageMask = {};
+    };
+
+    std::vector<AttachmentTransitionInfo> transitionInfos;
 };
 
 class RenderGraph
@@ -62,10 +70,9 @@ public:
           m_swapchain(swapchain),
           m_graphicsQueue(graphicsQueue),
           m_presentQueue(presentQueue),
-          m_commandPool(commandPool)
+          m_commandPool(commandPool),
+          m_imageCount(swapchain.getImages().size())
     {
-        // cache images
-        m_swapchainImages = m_swapchain.getImages();
     }
 
     // Add a render pass node. Nodes are executed in the order they are added.
@@ -78,9 +85,6 @@ public:
     // Must be called after creating swapchain and image views.
     void init()
     {
-        m_imageCount = static_cast<uint32_t>(m_swapchainImages.size());
-        if (m_imageCount == 0) throw std::runtime_error("Swapchain has zero images");
-
         // allocate one command buffer per swapchain image (common simple approach)
         vk::CommandBufferAllocateInfo allocInfo{};
         allocInfo.commandPool = *m_commandPool;
@@ -122,46 +126,50 @@ public:
         auto& cmd = m_commandBuffers[frameIndex];
 
         // Wait for fence for this frame to be signaled (previous GPU work finished)
-        m_device.waitForFences(*inFlightFence, VK_TRUE, UINT64_MAX);
+        m_device.waitForFences(*inFlightFence, true, UINT64_MAX);
 
         // Acquire next image
         auto acquireResult = m_swapchain.acquireNextImage(UINT64_MAX, *presentComplete, nullptr);
-        uint32_t imageIndex = acquireResult.second;
+        auto imageIndex = acquireResult.second;
 
         // reset command buffer for this image
-        cmd.begin(vk::CommandBufferBeginInfo{ vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
+        cmd.begin({ vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
 
         // For each pass, optionally insert an image layout transition, then call the user record callback.
         // We assume all passes render to the swapchain color image directly in this simple sample.
         for (auto const& pass : m_passes)
         {
-            // If requested, issue an ImageMemoryBarrier2 via pipelineBarrier2 (synchronization2)
-            if (pass.oldLayout != pass.newLayout)
-            {
-                vk::ImageMemoryBarrier2 barrier{};
-                barrier.srcStageMask = pass.srcStageMask;
-                barrier.srcAccessMask = pass.srcAccessMask;
-                barrier.dstStageMask = pass.dstStageMask;
-                barrier.dstAccessMask = pass.dstAccessMask;
-                barrier.oldLayout = pass.oldLayout;
-                barrier.newLayout = pass.newLayout;
-                barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                barrier.image = m_swapchainImages[imageIndex];
-                barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
-                barrier.subresourceRange.levelCount = 1;
-                barrier.subresourceRange.layerCount = 1;
+            std::vector<vk::ImageMemoryBarrier2> barriers{};
 
+            for (auto const& transitionInfo : pass.transitionInfos) {
+                if (transitionInfo.oldLayout != transitionInfo.newLayout) {
+                    vk::ImageMemoryBarrier2 barrier{};
+                    barrier.srcStageMask = transitionInfo.srcStageMask;
+                    barrier.srcAccessMask = transitionInfo.srcAccessMask;
+                    barrier.dstStageMask = transitionInfo.dstStageMask;
+                    barrier.dstAccessMask = transitionInfo.dstAccessMask;
+                    barrier.oldLayout = transitionInfo.oldLayout;
+                    barrier.newLayout = transitionInfo.newLayout;
+                    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    barrier.image = transitionInfo.images[frameIndex];
+                    barrier.subresourceRange.aspectMask = transitionInfo.aspectMask;
+                    barrier.subresourceRange.levelCount = 1;
+                    barrier.subresourceRange.layerCount = 1;
+                    barriers.emplace_back(std::move(barrier));
+                }
+			}
+
+            if (barriers.size()) {
                 vk::DependencyInfo dependencyInfo{};
-                dependencyInfo.imageMemoryBarrierCount = 1;
-                dependencyInfo.pImageMemoryBarriers = &barrier;
-
-                // pipelineBarrier2 is part of synchronization2; it provides a clearer model for students too.
+                dependencyInfo.imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size());
+                dependencyInfo.pImageMemoryBarriers = barriers.data();
                 cmd.pipelineBarrier2(dependencyInfo);
             }
 
             // Call the pass record function to record draw/compute commands.
-            if (pass.recordFunc) {
+            if (pass.recordFunc)
+            {
                 pass.recordFunc(cmd, imageIndex);
             }
         }
@@ -200,14 +208,12 @@ public:
     }
 
 private:
-    vk::raii::Device& m_device;
-    vk::raii::SwapchainKHR& m_swapchain;
-    vk::raii::Queue& m_graphicsQueue;
-    vk::raii::Queue& m_presentQueue;
-    vk::raii::CommandPool& m_commandPool;
-
-    // swapchain images (VkImage handles) used for transitions
-    std::vector<vk::Image> m_swapchainImages;
+    const vk::raii::Device& m_device;
+    const vk::raii::SwapchainKHR& m_swapchain;
+    const vk::raii::Queue& m_graphicsQueue;
+    const vk::raii::Queue& m_presentQueue;
+    const vk::raii::CommandPool& m_commandPool;
+    const uint32_t m_imageCount;
 
     // recorded passes
     std::vector<RenderPassNode> m_passes;
@@ -220,6 +226,5 @@ private:
     std::vector<vk::raii::Semaphore> m_renderFinishedSemaphores;
     std::vector<vk::raii::Fence> m_inFlightFences;
 
-    uint32_t m_imageCount = 0;
     uint64_t m_currentFrame = 0;
 };
