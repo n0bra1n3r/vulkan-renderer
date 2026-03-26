@@ -163,7 +163,7 @@ private:
     // vk::raii::Fence drawFence = nullptr;
 
     // New: render graph that encapsulates per-frame sync, command buffers and simple pass graph
-    std::unique_ptr<RenderGraph> renderGraph;
+    std::unique_ptr<Gfx::RenderGraph> renderGraph;
 
     void initWindow() {
         glfwInit();
@@ -1061,12 +1061,12 @@ private:
     void initRenderGraph()
     {
         // construct the render graph (holds references, does NOT copy objects)
-        renderGraph.reset(new RenderGraph(device, swapChain, graphicsQueue, presentQueue, commandPool));
+        renderGraph.reset(new Gfx::RenderGraph(device, swapChain, graphicsQueue, presentQueue, commandPool));
 
         // Main rendering pass: transition Undefined -> ColorAttachmentOptimal and record in the pass
-        RenderPassNode mainPass{};
+        Gfx::RenderPassNode mainPass{};
         mainPass.name = "MainPass";
-        RenderPassNode::AttachmentTransitionInfo mainColorTransition{ swapChainImages, vk::ImageAspectFlagBits::eColor };
+        Gfx::RenderPassNode::AttachmentTransitionInfo mainColorTransition{ swapChainImages, vk::ImageAspectFlagBits::eColor };
         mainColorTransition.oldLayout = vk::ImageLayout::eUndefined;
         mainColorTransition.newLayout = vk::ImageLayout::eColorAttachmentOptimal;
         mainColorTransition.srcAccessMask = {}; // from undefined
@@ -1074,7 +1074,7 @@ private:
         mainColorTransition.srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe;
         mainColorTransition.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
         mainPass.transitionInfos.emplace_back(mainColorTransition);
-        RenderPassNode::AttachmentTransitionInfo mainDepthTransition{ depthImages, vk::ImageAspectFlagBits::eDepth };
+        Gfx::RenderPassNode::AttachmentTransitionInfo mainDepthTransition{ depthImages, vk::ImageAspectFlagBits::eDepth };
         mainDepthTransition.oldLayout = vk::ImageLayout::eUndefined;
         mainDepthTransition.newLayout = vk::ImageLayout::eDepthAttachmentOptimal;
         mainDepthTransition.srcAccessMask = {}; // from undefined
@@ -1131,7 +1131,7 @@ private:
         renderGraph->addPass(mainPass);
 
         // Final transition pass: move from color attachment -> present.
-        RenderPassNode presentTransition{};
+        Gfx::RenderPassNode presentTransition{};
         presentTransition.name = "PresentTransition";
         mainColorTransition.oldLayout = vk::ImageLayout::eColorAttachmentOptimal;
         mainColorTransition.newLayout = vk::ImageLayout::ePresentSrcKHR;
@@ -1196,6 +1196,6 @@ int main() {
     catch (const std::exception& e) {
         return EXIT_FAILURE;
     }
-
+    
     return EXIT_SUCCESS;
 }
