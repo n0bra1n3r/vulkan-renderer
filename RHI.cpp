@@ -324,9 +324,12 @@ void RHI::initLogicalDevice() {
 
     vk::PhysicalDeviceFeatures2 features2{};
     features2.features.samplerAnisotropy = true;
+    features2.features.multiDrawIndirect = true;
 
     vk::PhysicalDeviceVulkan12Features vulkan12Features{};
     vulkan12Features.bufferDeviceAddress = true;
+    vulkan12Features.runtimeDescriptorArray = true;
+    vulkan12Features.shaderSampledImageArrayNonUniformIndexing = true;
 
     vk::PhysicalDeviceVulkan13Features vulkan13Features{};
     vulkan13Features.dynamicRendering = true; // Enable dynamic rendering from Vulkan 1.3

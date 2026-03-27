@@ -15,8 +15,10 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/quaternion.hpp>
+#define TINYGLTF_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
-#include <stb_image.h>
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <tiny_gltf.h>
 
 #include "Buffer.hpp"
 #include "Image.hpp"
@@ -48,25 +50,17 @@ struct Vertex
     }
 };
 
-const std::vector<Vertex> vertices =
+struct Texture
 {
-    {{-0.5, -0.5, 0.0}, {1.0, 0.0}},
-    {{0.5, -0.5, 0.0}, {0.0, 0.0}},
-    {{0.5, 0.5, 0.0}, {0.0, 1.0}},
-    {{-0.5, 0.5, 0.0}, {1.0, 1.0}}
+    std::vector<uint8_t> imageData;
+    int width;
+	int height;
 };
 
-const std::vector<uint32_t> indices =
+struct Instance
 {
-    0, 1, 2, 2, 3, 0
-};
-
-const vk::DrawIndexedIndirectCommand drawCmd = {
-    static_cast<uint32_t>(indices.size()), // indexCount
-    2, // instanceCount
-    0, // firstIndex
-    0, // vertexOffset
-    0  // firstInstance
+    glm::mat4 model;
+    glm::vec3 colour;
 };
 
 struct UniformBufferObject
@@ -74,12 +68,6 @@ struct UniformBufferObject
     glm::mat4 view;
     glm::mat4 proj;
 	glm::quat rotation;
-};
-
-struct StorageBufferObject
-{
-    glm::mat4 model;
-    glm::vec3 colour;
 };
 
 class HelloTriangleApplication {
@@ -97,11 +85,17 @@ private:
     Gfx::RHI rhi{};
     Gfx::RenderGraph graph{ rhi };
 
+    std::vector<Vertex> vertices{};
+    std::vector<uint32_t> indices{};
+	std::vector<Texture> textures{};
+    std::vector<vk::DrawIndexedIndirectCommand> drawCmds{};
+	std::vector<Instance> instances{};
+
     vk::raii::DescriptorSetLayout descriptorSetLayout = nullptr;
     vk::raii::PipelineLayout pipelineLayout = nullptr;
     vk::raii::Pipeline graphicsPipeline = nullptr;
-    Gfx::Image textureImage = nullptr;
-    vk::raii::ImageView textureImageView = nullptr;
+    std::vector<Gfx::Image> textureImages{};
+    std::vector<vk::raii::ImageView> textureImageViews{};
     vk::raii::Sampler textureSampler = nullptr;
     Gfx::Buffer vertexBuffer = nullptr;
     Gfx::Buffer indexBuffer = nullptr;
@@ -124,12 +118,15 @@ private:
     void initVulkan() {
 		rhi.init("Vulkan Renderer", getRequiredExtensions(), glfwGetWin32Window(window));
 
+        loadFloor();
+        loadModel();
+
         createDescriptorSetLayout();
 		createGraphicsPipeline();
         // create and initialize the render graph (allocates per-image command-buffers and sync)
         initRenderGraph();
-		createTextureImage();
-        createTextureImageView();
+		createTextureImages();
+        createTextureImageViews();
         createVertexBuffer();
         createIndexBuffer();
         createIndirectBuffer();
@@ -172,7 +169,7 @@ private:
     void createDescriptorSetLayout() {
         vk::DescriptorSetLayoutBinding uboLayoutBinding(0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr);
         vk::DescriptorSetLayoutBinding ssboLayoutBinding(1, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr);
-        vk::DescriptorSetLayoutBinding samplerLayoutBinding(2, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr);
+        vk::DescriptorSetLayoutBinding samplerLayoutBinding(2, vk::DescriptorType::eCombinedImageSampler, textures.size(), vk::ShaderStageFlagBits::eFragment, nullptr);
 
         std::array<vk::DescriptorSetLayoutBinding, 3> bindings = { uboLayoutBinding, ssboLayoutBinding, samplerLayoutBinding };
 
@@ -277,34 +274,220 @@ private:
         graphicsPipeline = vk::raii::Pipeline(rhi.getDevice(), nullptr, pipelineInfo);
 	}
 
-    void createTextureImage() {
-        int texWidth, texHeight, texChannels;
-        auto pixels = stbi_load("Textures/statue.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+    void loadFloor()
+    {
+        std::vector<Vertex> quad{
+            {{-0.5, -0.5, 0.0}, {1.0, 0.0}},
+            {{0.5, -0.5, 0.0}, {0.0, 0.0}},
+            {{0.5, 0.5, 0.0}, {0.0, 1.0}},
+            {{-0.5, 0.5, 0.0}, {1.0, 1.0}}
+        };
+
+        std::vector<uint32_t> quadIndices{
+            0, 1, 2, 2, 3, 0
+        };
+
+        vk::DrawIndexedIndirectCommand drawCmd{
+            static_cast<uint32_t>(quadIndices.size()), // index count
+            1, // instance count
+            static_cast<uint32_t>(indices.size()), // first index
+            static_cast<int32_t>(vertices.size()), // vertex offset
+            static_cast<uint32_t>(drawCmds.size()) // first instance
+		};
+
+        drawCmds.emplace_back(std::move(drawCmd));
+
+        vertices.insert(vertices.end(), quad.begin(), quad.end());
+        indices.insert(indices.end(), quadIndices.begin(), quadIndices.end());
+
+        Texture texture{};
+
+        int texChannels;
+        auto pixels = stbi_load("Textures/statue.jpg", &texture.width, &texture.height, &texChannels, STBI_rgb_alpha);
 
         if (!pixels) {
             throw std::runtime_error("failed to load texture image!");
         }
 
-        std::vector<uint8_t> imageBytes(pixels, pixels + (texWidth * texHeight * 4));
+        texture.imageData.resize(texture.width * texture.height * 4);
+        memcpy(texture.imageData.data(), pixels, texture.imageData.size());
 
         stbi_image_free(pixels);
 
-        vk::ImageCreateInfo imageInfo{};
-        imageInfo.imageType = vk::ImageType::e2D;
-        imageInfo.format = vk::Format::eR8G8B8A8Srgb;
-        imageInfo.extent.width = texWidth;
-        imageInfo.extent.height = texHeight;
-        imageInfo.extent.depth = 1;
-        imageInfo.mipLevels = 1;
-        imageInfo.arrayLayers = 1;
-        imageInfo.usage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled;
+        textures.emplace_back(std::move(texture));
 
-        textureImage = rhi.createImage(imageInfo);
-		rhi.updateImage(textureImage, imageBytes);
+        Instance instance{};
+        instance.model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0, 0.0, -0.5)) * glm::scale(glm::mat4(1.0f), glm::vec3(4.0));
+        instance.colour = glm::vec3(1.0f, 1.0f, 0.0f);
+
+        instances.emplace_back(std::move(instance));
     }
 
-    void createTextureImageView() {
-        textureImageView = rhi.createImageView(textureImage);
+    template<typename T>
+    std::vector<T> ReadAccessor(const tinygltf::Model& model, const tinygltf::Accessor& accessor) {
+        auto& view = model.bufferViews[accessor.bufferView];
+        auto& buffer = model.buffers[view.buffer];
+
+        auto dataPtr = buffer.data.data() + view.byteOffset + accessor.byteOffset;
+        auto stride = accessor.ByteStride(view);
+        auto count = accessor.count;
+
+        std::vector<T> out(count);
+
+        if (stride == sizeof(T)) {
+            // tightly packed
+            memcpy(out.data(), dataPtr, count * sizeof(T));
+        }
+        else {
+            // interleaved
+            for (size_t i = 0; i < count; i++) {
+                memcpy(&out[i], dataPtr + i * stride, sizeof(T));
+            }
+        }
+
+        return out;
+    }
+
+    uint32_t LoadPrimitive(const tinygltf::Model& model, const tinygltf::Primitive& primitive)
+    {
+        const tinygltf::Accessor& posAcc =
+            model.accessors[primitive.attributes.at("POSITION")];
+        auto positions = ReadAccessor<glm::vec3>(model, posAcc);
+
+        std::vector<glm::vec2> texCoords;
+        if (primitive.attributes.count("TEXCOORD_0"))
+        {
+            auto& texCoordAcc = model.accessors[primitive.attributes.at("TEXCOORD_0")];
+            texCoords = ReadAccessor<glm::vec2>(model, texCoordAcc);
+        }
+        else
+        {
+            texCoords.resize(positions.size(), glm::vec2(0));
+        }
+
+        vertices.reserve(vertices.size() + positions.size());
+        for (size_t i = 0; i < positions.size(); i++)
+        {
+            vertices.emplace_back(Vertex{ positions[i], texCoords[i] });
+        }
+
+        auto& idxAcc = model.accessors[primitive.indices];
+        auto& view = model.bufferViews[idxAcc.bufferView];
+        auto& buffer = model.buffers[view.buffer];
+
+        auto dataPtr = buffer.data.data() + view.byteOffset + idxAcc.byteOffset;
+
+        auto count = idxAcc.count;
+
+		indices.reserve(indices.size() + count);
+
+        switch (idxAcc.componentType) {
+        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT: 
+        {
+            auto src = reinterpret_cast<const uint16_t*>(dataPtr);
+            for (size_t i = 0; i < count; i++)
+            {
+                indices.emplace_back(src[i]);
+            }
+            break;
+        }
+        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT: 
+        {
+            auto src = reinterpret_cast<const uint32_t*>(dataPtr);
+            for (size_t i = 0; i < count; i++)
+            {
+                indices.emplace_back(src[i]);
+            }
+            break;
+        }
+        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE: 
+        {
+            auto src = reinterpret_cast<const uint8_t*>(dataPtr);
+            for (size_t i = 0; i < count; i++)
+            {
+                indices.emplace_back(src[i]);
+            }
+            break;
+        }
+        default:
+            throw std::runtime_error("Unsupported index type");
+        }
+
+        return count;
+    }
+
+    void loadModel() {
+        tinygltf::TinyGLTF loader{};
+
+		tinygltf::Model model;
+		std::string err;
+        if (!loader.LoadASCIIFromFile(&model, &err, nullptr, "Models/CesiumMan.gltf")) {
+			throw std::runtime_error("Failed to load model: " + err);
+        }
+
+        for (auto& mesh : model.meshes) {
+            for (auto& primitive : mesh.primitives) {
+                vk::DrawIndexedIndirectCommand drawCmd{
+                    0, // index count
+                    1, // instance count
+                    static_cast<uint32_t>(indices.size()), // first index
+                    static_cast<int32_t>(vertices.size()), // vertex offset
+                    static_cast<uint32_t>(drawCmds.size()) // first instance
+                };
+                
+                drawCmd.indexCount = LoadPrimitive(model, primitive);
+
+                drawCmds.emplace_back(std::move(drawCmd));
+            }
+        }
+
+        Texture texture{};
+
+        int texChannels;
+        auto pixels = stbi_load("Models/CesiumMan_img0.jpg", &texture.width, &texture.height, &texChannels, STBI_rgb_alpha);
+
+        if (!pixels) {
+            throw std::runtime_error("failed to load texture image!");
+        }
+
+		texture.imageData.resize(texture.width * texture.height * 4);
+		memcpy(texture.imageData.data(), pixels, texture.imageData.size());
+
+        stbi_image_free(pixels);
+
+		textures.emplace_back(std::move(texture));
+
+        Instance instance{};
+        instance.model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0, 0.0, -0.5));
+        instance.colour = glm::vec3(1.0f, 1.0f, 1.0f);
+
+        instances.emplace_back(std::move(instance));
+    }
+
+    void createTextureImages() {
+		textureImages.reserve(textures.size());
+
+        for (auto& texture : textures) {
+            vk::ImageCreateInfo imageInfo{};
+            imageInfo.imageType = vk::ImageType::e2D;
+            imageInfo.format = vk::Format::eR8G8B8A8Srgb;
+            imageInfo.extent.width = texture.width;
+            imageInfo.extent.height = texture.height;
+            imageInfo.extent.depth = 1;
+            imageInfo.mipLevels = 1;
+            imageInfo.arrayLayers = 1;
+            imageInfo.usage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled;
+
+            textureImages.emplace_back(std::move(rhi.createImage(imageInfo)));
+            rhi.updateImage(textureImages.back(), texture.imageData);
+        }
+    }
+
+    void createTextureImageViews() {
+        for (size_t i = 0; i < textures.size(); i++)
+        {
+			textureImageViews.emplace_back(std::move(rhi.createImageView(textureImages[i])));
+        }
 
         vk::PhysicalDeviceProperties properties = rhi.getPhysicalDevice().getProperties();
         vk::SamplerCreateInfo samplerInfo{};
@@ -337,11 +520,11 @@ private:
 
     void createIndirectBuffer() {
         vk::BufferCreateInfo bufferInfo{};
-        bufferInfo.size = sizeof(drawCmd);
+        bufferInfo.size = sizeof(drawCmds[0]) * drawCmds.size();
         bufferInfo.usage = vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst;
         
         indirectBuffer = rhi.createBuffer(bufferInfo);
-        rhi.updateBuffer(indirectBuffer, drawCmd);
+        rhi.updateBuffer(indirectBuffer, drawCmds);
 	}
 
     void createUniformBuffers() {
@@ -365,20 +548,11 @@ private:
 
     void createStorageBuffer() {
         vk::BufferCreateInfo bufferInfo{};
-        bufferInfo.size = sizeof(StorageBufferObject) * drawCmd.instanceCount;
+        bufferInfo.size = sizeof(instances[0]) * instances.size();
         bufferInfo.usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst;
 
         storageBuffer = rhi.createBuffer(bufferInfo);
-
-		StorageBufferObject ssboData{};
-        ssboData.model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0, 0.0, 0.0));
-        ssboData.colour = glm::vec3(1.0f, 1.0f, 0.0f);
-
-        StorageBufferObject ssboData1{};
-        ssboData1.model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0, 0.0, -0.5));
-        ssboData1.colour = glm::vec3(0.0f, 1.0f, 0.0f);
-
-        rhi.updateBuffer(storageBuffer, std::vector<StorageBufferObject>{ ssboData, ssboData1 });
+        rhi.updateBuffer(storageBuffer, instances);
     }
 
     void createDescriptorPool() {
@@ -402,16 +576,21 @@ private:
         vk::DescriptorBufferInfo storageBufferInfo{};
         storageBufferInfo.buffer = storageBuffer;
         storageBufferInfo.offset = 0;
-        storageBufferInfo.range = sizeof(StorageBufferObject);
+        storageBufferInfo.range = sizeof(Instance);
 
         vk::DescriptorBufferInfo uboBufferInfo{};
         uboBufferInfo.offset = 0;
         uboBufferInfo.range = sizeof(UniformBufferObject);
 
-        vk::DescriptorImageInfo imageInfo{};
-        imageInfo.sampler = textureSampler;
-        imageInfo.imageView = textureImageView;
-        imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        std::vector<vk::DescriptorImageInfo> imageInfos{};
+        for (size_t i = 0; i < textures.size(); i++) 
+        {
+            vk::DescriptorImageInfo imageInfo{};
+            imageInfo.sampler = textureSampler;
+            imageInfo.imageView = textureImageViews[i];
+            imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+			imageInfos.emplace_back(std::move(imageInfo));
+        }
 
         vk::WriteDescriptorSet uboWrite{};
         uboWrite.dstBinding = 0;
@@ -430,9 +609,9 @@ private:
         vk::WriteDescriptorSet imageWrite{};
         imageWrite.dstBinding = 2;
         imageWrite.dstArrayElement = 0;
-        imageWrite.descriptorCount = 1;
         imageWrite.descriptorType = vk::DescriptorType::eCombinedImageSampler;
-        imageWrite.pImageInfo = &imageInfo;
+        imageWrite.descriptorCount = imageInfos.size();
+        imageWrite.pImageInfo = imageInfos.data();
 
         std::vector<vk::DescriptorSetLayout> layouts(rhi.getMaxFramesInFlight(), *descriptorSetLayout);
 
@@ -520,7 +699,7 @@ private:
             cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
             cmd.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
 
-            cmd.drawIndexedIndirect(*indirectBuffer, 0, 1, static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand)));
+            cmd.drawIndexedIndirect(*indirectBuffer, 0, drawCmds.size(), static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand)));
 
             cmd.endRendering();
         };

@@ -10,6 +10,7 @@ struct VertexOutput
     float4 sv_position : SV_Position;
     float3 colour : COLOR0;
     float2 texCoord : TEXCOORD0;
+    uint instanceID : TEXCOORD1;
 };
 
 struct UniformBuffer
@@ -46,5 +47,6 @@ VertexOutput main(VertexInput input)
     output.sv_position = clipPosition;
     output.colour = instanceData.colour;
     output.texCoord = input.texCoord;
+    output.instanceID = input.instanceID;
     return output;
 }
