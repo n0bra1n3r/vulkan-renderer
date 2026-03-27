@@ -2,17 +2,8 @@
 
 using Gfx::RenderGraph;
 
-RenderGraph::RenderGraph(const vk::raii::Device& device, 
-                         const vk::raii::SwapchainKHR& swapchain, 
-                         const vk::raii::Queue& graphicsQueue, 
-                         const vk::raii::Queue& presentQueue, 
-                         const vk::raii::CommandPool& commandPool): 
-    m_device(device),
-    m_swapchain(swapchain),
-    m_graphicsQueue(graphicsQueue),
-    m_presentQueue(presentQueue),
-    m_commandPool(commandPool),
-    m_imageCount(swapchain.getImages().size())
+RenderGraph::RenderGraph(const RHI& rhi): 
+    m_rhi(rhi)
 {
 }
 
@@ -20,15 +11,15 @@ void RenderGraph::init()
 {
     // allocate one command buffer per swapchain image (common simple approach)
     vk::CommandBufferAllocateInfo allocInfo{};
-    allocInfo.commandPool = *m_commandPool;
+    allocInfo.commandPool = *m_rhi.getCommandPool();
     allocInfo.level = vk::CommandBufferLevel::ePrimary;
-    allocInfo.commandBufferCount = m_imageCount;
+    allocInfo.commandBufferCount = m_rhi.getMaxFramesInFlight();
 
     // vk::raii::CommandBuffers returns a container of RAII CommandBuffer objects;
     // move them into our vector so we can index per image.
-    vk::raii::CommandBuffers tempCmds{ m_device, allocInfo };
-    m_commandBuffers.reserve(m_imageCount);
-    for (uint32_t i = 0; i < m_imageCount; ++i) 
+    vk::raii::CommandBuffers tempCmds{ m_rhi.getDevice(), allocInfo};
+    m_commandBuffers.reserve(allocInfo.commandBufferCount);
+    for (uint32_t i = 0; i < allocInfo.commandBufferCount; ++i)
     {
         m_commandBuffers.emplace_back(std::move(tempCmds[i]));
     }
@@ -38,29 +29,29 @@ void RenderGraph::init()
     m_renderFinishedSemaphores.clear();
     m_inFlightFences.clear();
 
-    for (uint32_t i = 0; i < m_imageCount; ++i) 
+    for (uint32_t i = 0; i < allocInfo.commandBufferCount; ++i)
     {
-        m_presentCompleteSemaphores.emplace_back(m_device, vk::SemaphoreCreateInfo{});
-        m_renderFinishedSemaphores.emplace_back(m_device, vk::SemaphoreCreateInfo{});
+        m_presentCompleteSemaphores.emplace_back(m_rhi.getDevice(), vk::SemaphoreCreateInfo{});
+        m_renderFinishedSemaphores.emplace_back(m_rhi.getDevice(), vk::SemaphoreCreateInfo{});
         // start signaled so the first wait doesn't block forever if user forgets
-        m_inFlightFences.emplace_back(m_device, vk::FenceCreateInfo(vk::FenceCreateFlagBits::eSignaled));
+        m_inFlightFences.emplace_back(m_rhi.getDevice(), vk::FenceCreateInfo(vk::FenceCreateFlagBits::eSignaled));
     }
 }
 
 void RenderGraph::executeFrame()
 {
     // Round-robin frame index for per-frame sync objects
-    const uint32_t frameIndex = m_currentFrame % m_imageCount;
+    const uint32_t frameIndex = m_currentFrame % m_rhi.getMaxFramesInFlight();
     auto& inFlightFence = m_inFlightFences[frameIndex];
     auto& presentComplete = m_presentCompleteSemaphores[frameIndex];
     auto& renderFinished = m_renderFinishedSemaphores[frameIndex];
     auto& cmd = m_commandBuffers[frameIndex];
 
     // Wait for fence for this frame to be signaled (previous GPU work finished)
-    m_device.waitForFences(*inFlightFence, true, UINT64_MAX);
+    m_rhi.getDevice().waitForFences(*inFlightFence, true, UINT64_MAX);
 
     // Acquire next image
-    auto acquireResult = m_swapchain.acquireNextImage(UINT64_MAX, *presentComplete, nullptr);
+    auto acquireResult = m_rhi.getSwapChain().acquireNextImage(UINT64_MAX, *presentComplete, nullptr);
     auto imageIndex = acquireResult.second;
 
     // reset command buffer for this image
@@ -68,11 +59,11 @@ void RenderGraph::executeFrame()
 
     // For each pass, optionally insert an image layout transition, then call the user record callback.
     // We assume all passes render to the swapchain color image directly in this simple sample.
-    for (auto const& pass : m_passes)
+    for (auto& pass : m_passes)
     {
         std::vector<vk::ImageMemoryBarrier2> barriers{};
 
-        for (auto const& transitionInfo : pass.transitionInfos) 
+        for (auto& transitionInfo : pass.transitionInfos) 
         {
             if (transitionInfo.oldLayout != transitionInfo.newLayout) 
             {
@@ -111,7 +102,7 @@ void RenderGraph::executeFrame()
     cmd.end();
 
     // reset the fence to unsignaled before submit
-    m_device.resetFences(*inFlightFence);
+    m_rhi.getDevice().resetFences(*inFlightFence);
 
     // Submit: wait on presentComplete, signal renderFinished
     vk::PipelineStageFlags waitStages = vk::PipelineStageFlagBits::eColorAttachmentOutput;
@@ -125,17 +116,17 @@ void RenderGraph::executeFrame()
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = &*renderFinished;
 
-    m_graphicsQueue.submit(submitInfo, *inFlightFence);
+    m_rhi.getGraphicsQueue().submit(submitInfo, *inFlightFence);
 
     // Present: wait on renderFinished
     vk::PresentInfoKHR presentInfo{};
     presentInfo.waitSemaphoreCount = 1;
     presentInfo.pWaitSemaphores = &*renderFinished;
     presentInfo.swapchainCount = 1;
-    presentInfo.pSwapchains = &*m_swapchain;
+    presentInfo.pSwapchains = &*m_rhi.getSwapChain();
     presentInfo.pImageIndices = &imageIndex;
 
-    m_presentQueue.presentKHR(presentInfo);
+    m_rhi.getPresentQueue().presentKHR(presentInfo);
 
     // Advance frame index
     ++m_currentFrame;

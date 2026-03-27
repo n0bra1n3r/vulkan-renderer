@@ -21,11 +21,9 @@
 
 #pragma once
 
-#include <vulkan/vulkan_raii.hpp>
-#include <vector>
 #include <functional>
-#include <string>
-#include <stdexcept>
+
+#include "RHI.hpp"
 
 namespace Gfx
 {
@@ -41,8 +39,8 @@ namespace Gfx
 
         struct AttachmentTransitionInfo
         {
-            const std::vector<vk::Image>& images; // images to transition (e.g. swapchain image for color, depth image for depth)
-            const vk::ImageAspectFlagBits aspectMask; // aspect of the image to transition (e.g. color, depth, stencil)
+            std::vector<vk::Image> images; // images to transition (e.g. swapchain image for color, depth image for depth)
+            vk::ImageAspectFlagBits aspectMask; // aspect of the image to transition (e.g. color, depth, stencil)
 
             // Simple image-layout transition requirements for the attachments used by the pass.
             // If no transition is needed, set oldLayout == newLayout.
@@ -63,11 +61,8 @@ namespace Gfx
     {
     public:
         // Construct with references to objects managed elsewhere (HelloTriangleApplication keeps lifetime)
-        RenderGraph(const vk::raii::Device& device,
-            const vk::raii::SwapchainKHR& swapchain,
-            const vk::raii::Queue& graphicsQueue,
-            const vk::raii::Queue& presentQueue,
-            const vk::raii::CommandPool& commandPool);
+        RenderGraph(const RHI& rhi);
+        RenderGraph(const RenderGraph&) = delete;
 
         // Add a render pass node. Nodes are executed in the order they are added.
         void addPass(const RenderPassNode& node) { m_passes.push_back(node); }
@@ -83,12 +78,7 @@ namespace Gfx
         void executeFrame();
 
     private:
-        const vk::raii::Device& m_device;
-        const vk::raii::SwapchainKHR& m_swapchain;
-        const vk::raii::Queue& m_graphicsQueue;
-        const vk::raii::Queue& m_presentQueue;
-        const vk::raii::CommandPool& m_commandPool;
-        const uint32_t m_imageCount;
+		const RHI& m_rhi;
 
         // recorded passes
         std::vector<RenderPassNode> m_passes;
