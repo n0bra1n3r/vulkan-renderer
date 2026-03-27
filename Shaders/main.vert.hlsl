@@ -1,29 +1,11 @@
+#include "common.fxh"
+
 struct VertexInput
 {
     float3 position : ATTRIB0;
-    float2 texCoord : ATTRIB1;
-    uint instanceID : SV_InstanceID;
-};
-
-struct VertexOutput
-{
-    float4 sv_position : SV_Position;
-    float3 colour : COLOR0;
-    float2 texCoord : TEXCOORD0;
-    uint instanceID : TEXCOORD1;
-};
-
-struct UniformBuffer
-{
-    float4x4 view;
-    float4x4 proj;
-    float4 rotation;
-};
-
-struct StorageBuffer
-{
-    float4x4 model;
-    float3 colour;
+    float3 normal : ATTRIB1;
+    float2 texCoord : ATTRIB2;
+    uint sv_instanceID : SV_InstanceID;
 };
 
 ConstantBuffer<UniformBuffer> ubo : register(b0, space0);
@@ -38,7 +20,7 @@ float3 rotateFloat3(float3 v, float4 q)
 
 VertexOutput main(VertexInput input)
 {
-    StorageBuffer instanceData = ssbo[input.instanceID];
+    StorageBuffer instanceData = ssbo[input.sv_instanceID];
     VertexOutput output;
     float3 animatedPosition = rotateFloat3(input.position, ubo.rotation);
     float4 worldPosition = mul(instanceData.model, float4(animatedPosition, 1.0));
@@ -46,7 +28,8 @@ VertexOutput main(VertexInput input)
     float4 clipPosition = mul(ubo.proj, viewPosition);
     output.sv_position = clipPosition;
     output.colour = instanceData.colour;
+    output.normalWS = normalize(rotateFloat3(input.normal, ubo.rotation));
     output.texCoord = input.texCoord;
-    output.instanceID = input.instanceID;
+    output.instanceID = input.sv_instanceID;
     return output;
 }

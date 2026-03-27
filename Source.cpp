@@ -33,6 +33,7 @@ const uint32_t HEIGHT = 600;
 struct Vertex
 {
 	glm::vec3 position;
+	glm::vec3 normal;
     glm::vec2 texCoord;
 
     static vk::VertexInputBindingDescription getBindingDescription() {
@@ -42,10 +43,11 @@ struct Vertex
         return bindingDescription;
 	}
 
-    static std::array<vk::VertexInputAttributeDescription, 2> getAttributeDescriptions() {
+    static std::array<vk::VertexInputAttributeDescription, 3> getAttributeDescriptions() {
         return {
             vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, position)),
-            vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, texCoord))
+            vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, normal)),
+            vk::VertexInputAttributeDescription(2, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, texCoord))
         };
     }
 };
@@ -68,6 +70,7 @@ struct UniformBufferObject
     glm::mat4 view;
     glm::mat4 proj;
 	glm::quat rotation;
+    glm::vec4 nLightDir;
 };
 
 class HelloTriangleApplication {
@@ -167,7 +170,7 @@ private:
     }
 
     void createDescriptorSetLayout() {
-        vk::DescriptorSetLayoutBinding uboLayoutBinding(0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr);
+        vk::DescriptorSetLayoutBinding uboLayoutBinding(0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eAllGraphics, nullptr);
         vk::DescriptorSetLayoutBinding ssboLayoutBinding(1, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr);
         vk::DescriptorSetLayoutBinding samplerLayoutBinding(2, vk::DescriptorType::eCombinedImageSampler, textures.size(), vk::ShaderStageFlagBits::eFragment, nullptr);
 
@@ -277,10 +280,10 @@ private:
     void loadFloor()
     {
         std::vector<Vertex> quad{
-            {{-0.5, -0.5, 0.0}, {1.0, 0.0}},
-            {{0.5, -0.5, 0.0}, {0.0, 0.0}},
-            {{0.5, 0.5, 0.0}, {0.0, 1.0}},
-            {{-0.5, 0.5, 0.0}, {1.0, 1.0}}
+            {{-0.5, -0.5, 0.0}, {0.0, 0.0, 1.0}, {1.0, 0.0}},
+            {{0.5, -0.5, 0.0}, {0.0, 0.0, 1.0}, {0.0, 0.0}},
+            {{0.5, 0.5, 0.0}, {0.0, 0.0, 1.0}, {0.0, 1.0}},
+            {{-0.5, 0.5, 0.0}, {0.0, 0.0, 1.0}, {1.0, 1.0}}
         };
 
         std::vector<uint32_t> quadIndices{
@@ -354,6 +357,15 @@ private:
             model.accessors[primitive.attributes.at("POSITION")];
         auto positions = ReadAccessor<glm::vec3>(model, posAcc);
 
+        std::vector<glm::vec3> normals;
+        if (primitive.attributes.count("NORMAL")) {
+            auto& normalAcc = model.accessors[primitive.attributes.at("NORMAL")];
+            normals = ReadAccessor<glm::vec3>(model, normalAcc);
+        }
+        else {
+            normals.resize(positions.size(), glm::vec3(0));
+        }
+
         std::vector<glm::vec2> texCoords;
         if (primitive.attributes.count("TEXCOORD_0"))
         {
@@ -368,7 +380,7 @@ private:
         vertices.reserve(vertices.size() + positions.size());
         for (size_t i = 0; i < positions.size(); i++)
         {
-            vertices.emplace_back(Vertex{ positions[i], texCoords[i] });
+            vertices.emplace_back(Vertex{ positions[i], normals[i], texCoords[i]});
         }
 
         auto& idxAcc = model.accessors[primitive.indices];
@@ -737,6 +749,7 @@ private:
         ubo.proj = glm::perspective(glm::radians(45.0f), static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height), 0.1f, 10.0f);
         ubo.proj[1][1] *= -1;
         ubo.rotation = glm::angleAxis(time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+		ubo.nLightDir = -glm::vec4(glm::normalize(glm::vec3(-1.0f)), 0.0f);
 
         memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
     }
