@@ -97,7 +97,6 @@ private:
 
 	Gfx::Pipeline mainPipeline = nullptr;
     std::vector<Gfx::Image> textureImages{};
-    std::vector<vk::raii::ImageView> textureImageViews{};
     vk::raii::Sampler textureSampler = nullptr;
     Gfx::Buffer vertexBuffer = nullptr;
     Gfx::Buffer indexBuffer = nullptr;
@@ -126,8 +125,7 @@ private:
 		createGraphicsPipeline();
         // create and initialize the render graph (allocates per-image command-buffers and sync)
         initRenderGraph();
-		createTextureImages();
-        createTextureImageViews();
+		createTextureResources();
         createVertexBuffer();
         createIndexBuffer();
         createIndirectBuffer();
@@ -362,29 +360,23 @@ private:
         instances.emplace_back(std::move(instance));
     }
 
-    void createTextureImages() {
+    void createTextureResources() {
 		textureImages.reserve(textures.size());
 
+        vk::ImageCreateInfo imageInfo{};
+        imageInfo.imageType = vk::ImageType::e2D;
+        imageInfo.format = vk::Format::eR8G8B8A8Srgb;
+        imageInfo.extent.depth = 1;
+        imageInfo.mipLevels = 1;
+        imageInfo.arrayLayers = 1;
+        imageInfo.usage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled;
+
         for (auto& texture : textures) {
-            vk::ImageCreateInfo imageInfo{};
-            imageInfo.imageType = vk::ImageType::e2D;
-            imageInfo.format = vk::Format::eR8G8B8A8Srgb;
             imageInfo.extent.width = texture.width;
             imageInfo.extent.height = texture.height;
-            imageInfo.extent.depth = 1;
-            imageInfo.mipLevels = 1;
-            imageInfo.arrayLayers = 1;
-            imageInfo.usage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled;
 
             textureImages.emplace_back(std::move(rhi.createImage(imageInfo)));
             rhi.updateImage(textureImages.back(), texture.imageData);
-        }
-    }
-
-    void createTextureImageViews() {
-        for (size_t i = 0; i < textures.size(); i++)
-        {
-			textureImageViews.emplace_back(std::move(rhi.createImageView(textureImages[i])));
         }
 
         vk::PhysicalDeviceProperties properties = rhi.getPhysicalDevice().getProperties();
@@ -485,7 +477,7 @@ private:
         {
             vk::DescriptorImageInfo imageInfo{};
             imageInfo.sampler = textureSampler;
-            imageInfo.imageView = textureImageViews[i];
+            imageInfo.imageView = textureImages[i].getImageView();
             imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
 			imageInfos.emplace_back(std::move(imageInfo));
         }
@@ -511,7 +503,7 @@ private:
         imageWrite.descriptorCount = imageInfos.size();
         imageWrite.pImageInfo = imageInfos.data();
 
-        std::vector<vk::DescriptorSetLayout> layouts(rhi.getMaxFramesInFlight(), *descriptorSetLayout);
+        std::vector<vk::DescriptorSetLayout> layouts(rhi.getMaxFramesInFlight(), mainPipeline.getDescriptorSetLayout());
 
         vk::DescriptorSetAllocateInfo allocInfo{};
         allocInfo.descriptorPool = descriptorPool;

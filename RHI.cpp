@@ -557,7 +557,15 @@ Gfx::Image RHI::createImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryProp
 
     image.bindMemory(imageMemory, 0);
 
-    return Gfx::Image(std::move(image), std::move(imageMemory), imageInfo.extent, imageInfo.format);
+    vk::ImageViewCreateInfo viewInfo{};
+    viewInfo.image = image;
+    viewInfo.viewType = vk::ImageViewType::e2D;
+    viewInfo.format = imageInfo.format;
+    viewInfo.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
+    
+    vk::raii::ImageView imageView(m_device, viewInfo);
+
+    return Gfx::Image(std::move(image), std::move(imageMemory), std::move(imageView), imageInfo.extent, imageInfo.format);
 }
 
 void RHI::updateImage(const Gfx::Image& image, void* contentData, size_t contentSize)
@@ -598,16 +606,6 @@ void RHI::updateImage(const Gfx::Image& image, void* contentData, size_t content
     // TODO: use a fence instead
     m_graphicsQueue.submit(submitInfo, nullptr);
     m_graphicsQueue.waitIdle();
-}
-
-vk::raii::ImageView RHI::createImageView(const Image& image)
-{
-    vk::ImageViewCreateInfo viewInfo{};
-    viewInfo.image = image;
-    viewInfo.viewType = vk::ImageViewType::e2D;
-    viewInfo.format = image.m_format;
-    viewInfo.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
-    return vk::raii::ImageView(m_device, viewInfo);
 }
 
 Gfx::Pipeline RHI::createGraphicsPipeline(const Gfx::PipelineCreateInfo& createInfo)
