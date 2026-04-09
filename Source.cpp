@@ -22,6 +22,7 @@
 
 #include "Buffer.hpp"
 #include "Image.hpp"
+#include "Pipeline.hpp"
 #include "RenderGraph.hpp"
 #include "RHI.hpp"
 
@@ -43,8 +44,8 @@ struct Vertex
         return bindingDescription;
 	}
 
-    static std::array<vk::VertexInputAttributeDescription, 3> getAttributeDescriptions() {
-        return {
+    static std::vector<vk::VertexInputAttributeDescription> getAttributeDescriptions() {
+        return std::vector<vk::VertexInputAttributeDescription>{
             vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, position)),
             vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, normal)),
             vk::VertexInputAttributeDescription(2, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, texCoord))
@@ -94,9 +95,7 @@ private:
     std::vector<vk::DrawIndexedIndirectCommand> drawCmds{};
 	std::vector<Instance> instances{};
 
-    vk::raii::DescriptorSetLayout descriptorSetLayout = nullptr;
-    vk::raii::PipelineLayout pipelineLayout = nullptr;
-    vk::raii::Pipeline graphicsPipeline = nullptr;
+	Gfx::Pipeline mainPipeline = nullptr;
     std::vector<Gfx::Image> textureImages{};
     std::vector<vk::raii::ImageView> textureImageViews{};
     vk::raii::Sampler textureSampler = nullptr;
@@ -124,7 +123,6 @@ private:
         loadFloor();
         loadModel();
 
-        createDescriptorSetLayout();
 		createGraphicsPipeline();
         // create and initialize the render graph (allocates per-image command-buffers and sync)
         initRenderGraph();
@@ -145,136 +143,24 @@ private:
         return std::vector<const char*>(glfwExtensions, glfwExtensions + glfwExtensionCount);
     }
 
-    static std::vector<char> readFile(const std::string& filename) {
-        std::ifstream file(filename, std::ios::ate | std::ios::binary);
-
-        if (!file.is_open()) {
-            throw std::runtime_error("failed to open file!");
-        }
-
-        std::vector<char> buffer(file.tellg());
-
-        file.seekg(0, std::ios::beg);
-        file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-        file.close();
-
-        return buffer;
-    }
-
-    vk::raii::ShaderModule createShaderModule(const std::vector<char>& code) const {
-        vk::ShaderModuleCreateInfo createInfo{};
-        createInfo.codeSize = code.size() * sizeof(char);
-        createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
-
-		return vk::raii::ShaderModule{ rhi.getDevice(), createInfo};
-    }
-
-    void createDescriptorSetLayout() {
-        vk::DescriptorSetLayoutBinding uboLayoutBinding(0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eAllGraphics, nullptr);
-        vk::DescriptorSetLayoutBinding ssboLayoutBinding(1, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr);
-        vk::DescriptorSetLayoutBinding samplerLayoutBinding(2, vk::DescriptorType::eCombinedImageSampler, textures.size(), vk::ShaderStageFlagBits::eFragment, nullptr);
-
-        std::array<vk::DescriptorSetLayoutBinding, 3> bindings = { uboLayoutBinding, ssboLayoutBinding, samplerLayoutBinding };
-
-        vk::DescriptorSetLayoutCreateInfo layoutInfo{};
-        layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
-        layoutInfo.pBindings = bindings.data();
-
-        descriptorSetLayout = vk::raii::DescriptorSetLayout(rhi.getDevice(), layoutInfo);
-    }
-
     void createGraphicsPipeline() {
-		auto surfaceFormat = rhi.getSurfaceFormat();    
-
-        vk::PipelineRenderingCreateInfo pipelineRenderingCreateInfo{};
-        pipelineRenderingCreateInfo.colorAttachmentCount = 1;
-        pipelineRenderingCreateInfo.pColorAttachmentFormats = &surfaceFormat;
-        pipelineRenderingCreateInfo.depthAttachmentFormat = rhi.getDepthFormat();
-
-        auto fragCode = readFile("Shaders/main.frag.spv");
-        auto vertCode = readFile("Shaders/main.vert.spv");
-
-        auto fragModule = createShaderModule(fragCode);
-        auto vertModule = createShaderModule(vertCode);
-
-        vk::PipelineShaderStageCreateInfo fragShaderStageInfo{};
-        fragShaderStageInfo.stage = vk::ShaderStageFlagBits::eFragment;
-        fragShaderStageInfo.module = fragModule;
-        fragShaderStageInfo.pName = "main";
-
-        vk::PipelineShaderStageCreateInfo vertShaderStageInfo{};
-        vertShaderStageInfo.stage = vk::ShaderStageFlagBits::eVertex;
-        vertShaderStageInfo.module = vertModule;
-        vertShaderStageInfo.pName = "main";
-
-        vk::PipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
-
-		auto bindingDescription = Vertex::getBindingDescription();
-		auto attributeDescriptions = Vertex::getAttributeDescriptions();
-
-        vk::PipelineVertexInputStateCreateInfo vertexInputInfo{};
-		vertexInputInfo.vertexBindingDescriptionCount = 1;
-		vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
-		vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
-		vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
-
-        vk::PipelineInputAssemblyStateCreateInfo inputAssembly{};
-        inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
-
-        std::vector<vk::DynamicState> dynamicStates = {
-            vk::DynamicState::eViewport,
-            vk::DynamicState::eScissor
+		Gfx::PipelineCreateInfo pipelineCreateInfo{};
+        pipelineCreateInfo.shaders = {
+            { "Shaders/main.vert.spv", vk::ShaderStageFlagBits::eVertex },
+            { "Shaders/main.frag.spv", vk::ShaderStageFlagBits::eFragment },
         };
-        vk::PipelineDynamicStateCreateInfo dynamicState({}, dynamicStates.size(), dynamicStates.data());
+        pipelineCreateInfo.vertexInputBindings = { Vertex::getBindingDescription() };
+        pipelineCreateInfo.vertexInputAttributes = Vertex::getAttributeDescriptions();
+        pipelineCreateInfo.descriptorSetLayoutBindings = {
+            { 0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eAllGraphics, nullptr },
+            { 1, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr },
+            { 2, vk::DescriptorType::eCombinedImageSampler, static_cast<uint32_t>(textures.size()), vk::ShaderStageFlagBits::eFragment, nullptr },
+            { 3, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr },
+		};
+        pipelineCreateInfo.colorAttachments = {{ rhi.getSurfaceFormat() }};
+		pipelineCreateInfo.depthAttachment = { rhi.getDepthFormat() };
 
-        vk::PipelineViewportStateCreateInfo viewportState{};
-        viewportState.viewportCount = 1;
-        viewportState.scissorCount = 1;
-
-        vk::PipelineRasterizationStateCreateInfo rasterizer{};
-        rasterizer.cullMode = vk::CullModeFlagBits::eBack;
-        rasterizer.lineWidth = 1.0f;
-
-        vk::PipelineMultisampleStateCreateInfo multisampling{};
-        multisampling.rasterizationSamples = vk::SampleCountFlagBits::e1;
-
-        vk::PipelineColorBlendAttachmentState colorBlendAttachment{};
-        colorBlendAttachment.colorWriteMask =
-            vk::ColorComponentFlagBits::eR | 
-            vk::ColorComponentFlagBits::eG | 
-            vk::ColorComponentFlagBits::eB | 
-            vk::ColorComponentFlagBits::eA;
-
-        vk::PipelineColorBlendStateCreateInfo colorBlending{};
-        colorBlending.attachmentCount = 1;
-        colorBlending.pAttachments = &colorBlendAttachment;
-
-        vk::PipelineDepthStencilStateCreateInfo depthStencil{};
-        depthStencil.depthTestEnable = true;
-        depthStencil.depthWriteEnable = true;
-        depthStencil.depthCompareOp = vk::CompareOp::eLess;
-
-        vk::PipelineLayoutCreateInfo pipelineLayoutInfo{};
-        pipelineLayoutInfo.setLayoutCount = 1;
-        pipelineLayoutInfo.pSetLayouts = &*descriptorSetLayout;
-
-        pipelineLayout = vk::raii::PipelineLayout(rhi.getDevice(), pipelineLayoutInfo);
-
-        vk::GraphicsPipelineCreateInfo pipelineInfo{};
-        pipelineInfo.pNext = &pipelineRenderingCreateInfo;
-        pipelineInfo.stageCount = 2;
-        pipelineInfo.pStages = shaderStages;
-        pipelineInfo.pVertexInputState = &vertexInputInfo;
-        pipelineInfo.pInputAssemblyState = &inputAssembly;
-        pipelineInfo.pDynamicState = &dynamicState;
-        pipelineInfo.pViewportState = &viewportState;
-        pipelineInfo.pRasterizationState = &rasterizer;
-        pipelineInfo.pMultisampleState = &multisampling;
-        pipelineInfo.pColorBlendState = &colorBlending;
-        pipelineInfo.pDepthStencilState = &depthStencil;
-        pipelineInfo.layout = pipelineLayout;
-
-        graphicsPipeline = vk::raii::Pipeline(rhi.getDevice(), nullptr, pipelineInfo);
+        mainPipeline = rhi.createGraphicsPipeline(pipelineCreateInfo);
 	}
 
     void loadFloor()
@@ -704,9 +590,9 @@ private:
             cmd.beginRendering(renderingInfo);
             cmd.bindVertexBuffers(0, *vertexBuffer, { 0 });
             cmd.bindIndexBuffer(*indexBuffer, 0, vk::IndexType::eUint32);
-            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, *descriptorSets[imageIndex], nullptr);
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, mainPipeline.getPipelineLayout(), 0, *descriptorSets[imageIndex], nullptr);
 
-            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline);
+            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, mainPipeline);
 
             cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
             cmd.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
@@ -753,10 +639,6 @@ private:
 
         memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
     }
-
-    // removed transitionImageLayout and recordCommandBuffer methods - RenderGraph now handles transitions + per-pass recording
-
-    // removed createSyncObjects - RenderGraph manages per-frame sync
 
     void drawFrame() {
         // delegate frame orchestration to the render graph

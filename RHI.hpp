@@ -6,6 +6,9 @@ namespace Gfx
 {
 	class Buffer;
 	class Image;
+	class Pipeline;
+
+	struct PipelineCreateInfo;
 
 	class RHI
 	{
@@ -35,6 +38,8 @@ namespace Gfx
 		Image createImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryPropertyFlags properties = vk::MemoryPropertyFlagBits::eDeviceLocal);
 		void updateImage(const Gfx::Image& image, void* contentData, size_t contentSize);
 		vk::raii::ImageView createImageView(const Image& image);
+
+		Pipeline createGraphicsPipeline(const PipelineCreateInfo& createInfo);
 
 		template<typename T>
 		void updateBuffer(const Buffer& buffer, T data) {

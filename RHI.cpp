@@ -9,6 +9,7 @@
 
 #include "Buffer.hpp"
 #include "Image.hpp"
+#include "Pipeline.hpp"
 
 using Gfx::RHI;
 
@@ -203,6 +204,30 @@ static void transitionImageLayout(const vk::raii::CommandBuffer& commandBuffer, 
     }
 
     commandBuffer.pipelineBarrier(sourceStage, destinationStage, {}, {}, nullptr, barrier);
+}
+
+static std::vector<char> readFile(const std::string& filename) {
+    std::ifstream file(filename, std::ios::ate | std::ios::binary);
+
+    if (!file.is_open()) {
+        throw std::runtime_error("failed to open file!");
+    }
+
+    std::vector<char> buffer(file.tellg());
+
+    file.seekg(0, std::ios::beg);
+    file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+    file.close();
+
+    return buffer;
+}
+
+static vk::raii::ShaderModule createShaderModule(const vk::raii::Device& device, const std::vector<char>& code) {
+    vk::ShaderModuleCreateInfo createInfo{};
+    createInfo.codeSize = code.size() * sizeof(char);
+    createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+
+    return vk::raii::ShaderModule{ device, createInfo };
 }
 
 void RHI::init(const std::string& appName, const std::vector<const char*>& extensions, void* window) {
@@ -583,4 +608,110 @@ vk::raii::ImageView RHI::createImageView(const Image& image)
     viewInfo.format = image.m_format;
     viewInfo.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
     return vk::raii::ImageView(m_device, viewInfo);
+}
+
+Gfx::Pipeline RHI::createGraphicsPipeline(const Gfx::PipelineCreateInfo& createInfo)
+{
+    std::vector<vk::Format> colorAttachmentFormats{};
+	std::vector<vk::PipelineColorBlendAttachmentState> colorBlendAttachments{};
+
+    for (auto& colorAttachment : createInfo.colorAttachments) {
+        colorAttachmentFormats.emplace_back(colorAttachment.format);
+
+        vk::PipelineColorBlendAttachmentState colorBlendAttachment{};
+        colorBlendAttachment.colorWriteMask = colorAttachment.writeMask;
+
+        colorBlendAttachments.emplace_back(std::move(colorBlendAttachment));
+	}
+
+    vk::DescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.bindingCount = static_cast<uint32_t>(createInfo.descriptorSetLayoutBindings.size());
+    layoutInfo.pBindings = createInfo.descriptorSetLayoutBindings.data();
+
+    vk::raii::DescriptorSetLayout descriptorSetLayout(m_device, layoutInfo);
+
+    vk::PipelineLayoutCreateInfo pipelineLayoutInfo{};
+    pipelineLayoutInfo.setLayoutCount = 1;
+    pipelineLayoutInfo.pSetLayouts = &*descriptorSetLayout;
+
+    vk::raii::PipelineLayout pipelineLayout(m_device, pipelineLayoutInfo);
+
+    vk::PipelineRenderingCreateInfo pipelineRenderingCreateInfo{};
+    pipelineRenderingCreateInfo.colorAttachmentCount = static_cast<uint32_t>(colorAttachmentFormats.size());
+    pipelineRenderingCreateInfo.pColorAttachmentFormats = colorAttachmentFormats.data();
+	pipelineRenderingCreateInfo.depthAttachmentFormat = createInfo.depthAttachment.format;
+
+    std::vector<vk::PipelineShaderStageCreateInfo> shaderStages{};
+    std::vector<vk::raii::ShaderModule> shaderModules{};
+
+    for (auto& shader : createInfo.shaders) {
+        auto code = readFile(shader.path);
+        auto module = createShaderModule(m_device, code);
+
+        shaderModules.emplace_back(std::move(module));
+
+        vk::PipelineShaderStageCreateInfo shaderStageInfo{};
+        shaderStageInfo.stage = shader.stage;
+        shaderStageInfo.module = shaderModules.back();
+        shaderStageInfo.pName = "main";
+
+        shaderStages.emplace_back(std::move(shaderStageInfo));
+	}
+
+    vk::PipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
+
+    std::array<vk::DynamicState, 2> dynamicStates = {
+        vk::DynamicState::eViewport,
+        vk::DynamicState::eScissor
+    };
+    vk::PipelineDynamicStateCreateInfo dynamicState{ 
+        {}, 
+        static_cast<uint32_t>(dynamicStates.size()),
+        dynamicStates.data()
+    };
+
+    vk::PipelineViewportStateCreateInfo viewportState{};
+    viewportState.viewportCount = 1;
+    viewportState.scissorCount = 1;
+
+    vk::PipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.cullMode = vk::CullModeFlagBits::eBack;
+    rasterizer.lineWidth = 1.0f;
+
+    vk::PipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.rasterizationSamples = vk::SampleCountFlagBits::e1;
+
+    vk::PipelineColorBlendStateCreateInfo colorBlending{};
+    colorBlending.attachmentCount = static_cast<uint32_t>(colorBlendAttachments.size());
+    colorBlending.pAttachments = colorBlendAttachments.data();
+
+    vk::PipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.depthTestEnable = createInfo.depthAttachment.format != vk::Format::eUndefined;
+    depthStencil.depthWriteEnable = depthStencil.depthTestEnable;
+    depthStencil.depthCompareOp = vk::CompareOp::eLess;
+
+    vk::PipelineVertexInputStateCreateInfo vertexInputInfo{};
+    vertexInputInfo.vertexBindingDescriptionCount = static_cast<uint32_t>(createInfo.vertexInputBindings.size());
+    vertexInputInfo.pVertexBindingDescriptions = createInfo.vertexInputBindings.data();
+    vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(createInfo.vertexInputAttributes.size());
+    vertexInputInfo.pVertexAttributeDescriptions = createInfo.vertexInputAttributes.data();
+
+    vk::GraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.pNext = &pipelineRenderingCreateInfo;
+    pipelineInfo.stageCount = shaderStages.size();
+    pipelineInfo.pStages = shaderStages.data();
+    pipelineInfo.pVertexInputState = &vertexInputInfo;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.layout = pipelineLayout;
+
+    vk::raii::Pipeline shadowPipeline(m_device, nullptr, pipelineInfo);
+
+	return Gfx::Pipeline(std::move(shadowPipeline), std::move(pipelineLayout), std::move(descriptorSetLayout));
 }
