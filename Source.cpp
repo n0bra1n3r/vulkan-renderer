@@ -759,7 +759,7 @@ private:
         ubo.proj = glm::perspective(glm::radians(45.0f), static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height), 0.1f, 10.0f);
         ubo.proj[1][1] *= -1;
         ubo.rotation = glm::angleAxis(time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-		auto nLightDir = -glm::normalize(glm::vec3(-1.0f));
+		auto nLightDir = -glm::normalize(glm::vec3(-1.0f, 1.0, -1.0));
 		ubo.nLightDir = glm::vec4(nLightDir, 0.0f);
         ubo.lightView = lookAt(nLightDir, glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
         ubo.lightProj = glm::ortho(-3.0f, 3.0f, -3.0f, 3.0f, 0.1f, 10.0f);
