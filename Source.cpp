@@ -10,6 +10,7 @@
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
 #define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #define GLM_ENABLE_EXPERIMENTAL
@@ -70,6 +71,8 @@ struct UniformBufferObject
 {
     glm::mat4 view;
     glm::mat4 proj;
+    glm::mat4 lightView;
+    glm::mat4 lightProj;
 	glm::quat rotation;
     glm::vec4 nLightDir;
 };
@@ -96,8 +99,11 @@ private:
 	std::vector<Instance> instances{};
 
 	Gfx::Pipeline mainPipeline = nullptr;
+    Gfx::Pipeline shadowPipeline = nullptr;
     std::vector<Gfx::Image> textureImages{};
     vk::raii::Sampler textureSampler = nullptr;
+    std::vector<Gfx::Image> shadowImages{};
+    vk::raii::Sampler shadowSampler = nullptr;
     Gfx::Buffer vertexBuffer = nullptr;
     Gfx::Buffer indexBuffer = nullptr;
     Gfx::Buffer indirectBuffer = nullptr;
@@ -123,9 +129,10 @@ private:
         loadModel();
 
 		createGraphicsPipeline();
+        createShadowPipeline();
         // create and initialize the render graph (allocates per-image command-buffers and sync)
-        initRenderGraph();
 		createTextureResources();
+		createShadowResources();
         createVertexBuffer();
         createIndexBuffer();
         createIndirectBuffer();
@@ -133,6 +140,8 @@ private:
         createStorageBuffer();
 		createDescriptorPool();
         createDescriptorSets();
+
+        initRenderGraph();
     }
 
     std::vector<const char*> getRequiredExtensions() {
@@ -155,11 +164,30 @@ private:
             { 2, vk::DescriptorType::eCombinedImageSampler, static_cast<uint32_t>(textures.size()), vk::ShaderStageFlagBits::eFragment, nullptr },
             { 3, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr },
 		};
-        pipelineCreateInfo.colorAttachments = {{ rhi.getSurfaceFormat() }};
+        pipelineCreateInfo.colorAttachments = { { rhi.getSurfaceFormat() } };
 		pipelineCreateInfo.depthAttachment = { rhi.getDepthFormat() };
 
         mainPipeline = rhi.createGraphicsPipeline(pipelineCreateInfo);
 	}
+
+    void createShadowPipeline() {
+        Gfx::PipelineCreateInfo pipelineCreateInfo{};
+        pipelineCreateInfo.shaders = {
+            { "Shaders/shadow.vert.spv", vk::ShaderStageFlagBits::eVertex },
+            { "Shaders/shadow.frag.spv", vk::ShaderStageFlagBits::eFragment },
+        };
+        pipelineCreateInfo.vertexInputBindings = { Vertex::getBindingDescription() };
+        pipelineCreateInfo.vertexInputAttributes = Vertex::getAttributeDescriptions();
+        pipelineCreateInfo.descriptorSetLayoutBindings = {
+            { 0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eAllGraphics, nullptr },
+            { 1, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr },
+            { 2, vk::DescriptorType::eCombinedImageSampler, static_cast<uint32_t>(textures.size()), vk::ShaderStageFlagBits::eFragment, nullptr },
+            { 3, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr },
+        };
+        pipelineCreateInfo.depthAttachment = { rhi.getDepthFormat() };
+
+        shadowPipeline = rhi.createGraphicsPipeline(pipelineCreateInfo);
+    }
 
     void loadFloor()
     {
@@ -278,7 +306,7 @@ private:
 		indices.reserve(indices.size() + count);
 
         switch (idxAcc.componentType) {
-        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT: 
+        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
         {
             auto src = reinterpret_cast<const uint16_t*>(dataPtr);
             for (size_t i = 0; i < count; i++)
@@ -287,7 +315,7 @@ private:
             }
             break;
         }
-        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT: 
+        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
         {
             auto src = reinterpret_cast<const uint32_t*>(dataPtr);
             for (size_t i = 0; i < count; i++)
@@ -296,7 +324,7 @@ private:
             }
             break;
         }
-        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE: 
+        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
         {
             auto src = reinterpret_cast<const uint8_t*>(dataPtr);
             for (size_t i = 0; i < count; i++)
@@ -330,7 +358,7 @@ private:
                     static_cast<int32_t>(vertices.size()), // vertex offset
                     static_cast<uint32_t>(drawCmds.size()) // first instance
                 };
-                
+
                 drawCmd.indexCount = LoadPrimitive(model, primitive);
 
                 drawCmds.emplace_back(std::move(drawCmd));
@@ -390,6 +418,33 @@ private:
         textureSampler = vk::raii::Sampler(rhi.getDevice(), samplerInfo);
     }
 
+    void createShadowResources() {
+        shadowImages.reserve(rhi.getMaxFramesInFlight());
+
+        auto extent = rhi.getSwapChainExtent();
+
+        vk::ImageCreateInfo imageInfo{};
+        imageInfo.imageType = vk::ImageType::e2D;
+		imageInfo.format = rhi.getDepthFormat();
+        imageInfo.extent.width = extent.width;
+        imageInfo.extent.height = extent.height;
+        imageInfo.extent.depth = 1;
+        imageInfo.mipLevels = 1;
+        imageInfo.arrayLayers = 1;
+        imageInfo.usage = vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled;
+
+        for (size_t i = 0; i < rhi.getMaxFramesInFlight(); ++i) {
+            shadowImages.emplace_back(std::move(rhi.createImage(imageInfo)));
+        }
+
+        vk::SamplerCreateInfo samplerInfo{};
+        samplerInfo.magFilter = vk::Filter::eLinear;
+        samplerInfo.minFilter = vk::Filter::eLinear;
+        samplerInfo.mipmapMode = vk::SamplerMipmapMode::eLinear;
+
+        shadowSampler = vk::raii::Sampler(rhi.getDevice(), samplerInfo);
+    }
+
     void createVertexBuffer() {
         vk::BufferCreateInfo bufferInfo{};
         bufferInfo.size = sizeof(vertices[0]) * vertices.size();
@@ -403,7 +458,7 @@ private:
         vk::BufferCreateInfo bufferInfo{};
         bufferInfo.size = sizeof(indices[0]) * indices.size();
         bufferInfo.usage = vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst;
-        
+
         indexBuffer = rhi.createBuffer(bufferInfo);
 		rhi.updateBuffer(indexBuffer, indices);
     }
@@ -412,7 +467,7 @@ private:
         vk::BufferCreateInfo bufferInfo{};
         bufferInfo.size = sizeof(drawCmds[0]) * drawCmds.size();
         bufferInfo.usage = vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst;
-        
+
         indirectBuffer = rhi.createBuffer(bufferInfo);
         rhi.updateBuffer(indirectBuffer, drawCmds);
 	}
@@ -446,15 +501,19 @@ private:
     }
 
     void createDescriptorPool() {
-        std::array<vk::DescriptorPoolSize, 3> poolSizes = {
-            vk::DescriptorPoolSize{ vk::DescriptorType::eUniformBuffer, rhi.getMaxFramesInFlight() },
+        auto maxFrames = rhi.getMaxFramesInFlight();
+        auto combinedImageSamplersPerSet = static_cast<uint32_t>(textures.size()) + 1;
+
+        std::array<vk::DescriptorPoolSize, 4> poolSizes = {
+            vk::DescriptorPoolSize{ vk::DescriptorType::eUniformBuffer, maxFrames },
             vk::DescriptorPoolSize{ vk::DescriptorType::eStorageBuffer, 1 },
-            vk::DescriptorPoolSize{ vk::DescriptorType::eCombinedImageSampler, 1 },
+            vk::DescriptorPoolSize{ vk::DescriptorType::eCombinedImageSampler, combinedImageSamplersPerSet * maxFrames },
+            vk::DescriptorPoolSize{ vk::DescriptorType::eCombinedImageSampler, maxFrames },
         };
 
         vk::DescriptorPoolCreateInfo poolInfo{};
         poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-        poolInfo.maxSets = static_cast<uint32_t>(rhi.getMaxFramesInFlight());
+        poolInfo.maxSets = maxFrames;
         poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
         poolInfo.pPoolSizes = poolSizes.data();
 
@@ -466,14 +525,14 @@ private:
         vk::DescriptorBufferInfo storageBufferInfo{};
         storageBufferInfo.buffer = storageBuffer;
         storageBufferInfo.offset = 0;
-        storageBufferInfo.range = sizeof(Instance);
+        storageBufferInfo.range = instances.size() * sizeof(Instance);
 
         vk::DescriptorBufferInfo uboBufferInfo{};
         uboBufferInfo.offset = 0;
         uboBufferInfo.range = sizeof(UniformBufferObject);
 
         std::vector<vk::DescriptorImageInfo> imageInfos{};
-        for (size_t i = 0; i < textures.size(); i++) 
+        for (size_t i = 0; i < textures.size(); i++)
         {
             vk::DescriptorImageInfo imageInfo{};
             imageInfo.sampler = textureSampler;
@@ -495,13 +554,23 @@ private:
         ssboWrite.descriptorCount = 1;
         ssboWrite.descriptorType = vk::DescriptorType::eStorageBuffer;
         ssboWrite.pBufferInfo = &storageBufferInfo;
-        
+
         vk::WriteDescriptorSet imageWrite{};
         imageWrite.dstBinding = 2;
         imageWrite.dstArrayElement = 0;
         imageWrite.descriptorType = vk::DescriptorType::eCombinedImageSampler;
         imageWrite.descriptorCount = imageInfos.size();
         imageWrite.pImageInfo = imageInfos.data();
+
+        vk::DescriptorImageInfo shadowImageInfo{};
+        shadowImageInfo.sampler = shadowSampler;
+        shadowImageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+
+        vk::WriteDescriptorSet shadowImageWrite{};
+        shadowImageWrite.dstBinding = 3;
+        shadowImageWrite.dstArrayElement = 0;
+        shadowImageWrite.descriptorCount = 1;
+        shadowImageWrite.descriptorType = vk::DescriptorType::eCombinedImageSampler;
 
         std::vector<vk::DescriptorSetLayout> layouts(rhi.getMaxFramesInFlight(), mainPipeline.getDescriptorSetLayout());
 
@@ -518,19 +587,79 @@ private:
             ssboWrite.dstSet = descriptorSets[i];
             imageWrite.dstSet = descriptorSets[i];
 
+            vk::DescriptorImageInfo perFrameShadowInfo = shadowImageInfo;
+            perFrameShadowInfo.imageView = shadowImages[i].getImageView();
+
+            shadowImageWrite.dstSet = descriptorSets[i];
+            shadowImageWrite.pImageInfo = &perFrameShadowInfo;
+
             rhi.getDevice().updateDescriptorSets(uboWrite, {});
             rhi.getDevice().updateDescriptorSets(ssboWrite, {});
             rhi.getDevice().updateDescriptorSets(imageWrite, {});
+            rhi.getDevice().updateDescriptorSets(shadowImageWrite, {});
         }
     }
 
     // New: create and initialize the RenderGraph and add the passes used by the app
     void initRenderGraph()
     {
+        // Shadow pass: render scene from light into depth buffer
+        Gfx::RenderPassNode shadowPass{};
+        shadowPass.name = "ShadowPass";
+        Gfx::RenderPassNode::AttachmentTransitionInfo shadowTransition{ {} , vk::ImageAspectFlagBits::eDepth };
+        // populate with the vk::Image handles for each per-frame shadow image
+        shadowTransition.images = std::vector<vk::Image>(shadowImages.size());
+        for (size_t i = 0; i < shadowImages.size(); ++i) shadowTransition.images[i] = shadowImages[i];
+        shadowTransition.oldLayout = vk::ImageLayout::eUndefined;
+        shadowTransition.newLayout = vk::ImageLayout::eDepthAttachmentOptimal;
+        shadowTransition.srcAccessMask = {}; // from undefined
+        shadowTransition.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+        shadowTransition.srcStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests;
+        shadowTransition.dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests;
+        shadowPass.transitionInfos.emplace_back(std::move(shadowTransition));
+
+        shadowPass.recordFunc = [this](vk::raii::CommandBuffer& cmd, uint32_t imageIndex)
+        {
+            auto swapChainExtent = rhi.getSwapChainExtent();
+
+            updateUniformBuffer(imageIndex);
+
+            cmd.bindVertexBuffers(0, *vertexBuffer, { 0 });
+            cmd.bindIndexBuffer(*indexBuffer, 0, vk::IndexType::eUint32);
+
+            cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
+            cmd.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
+
+            vk::ClearValue clearDepth = vk::ClearDepthStencilValue(1.0f, 0.0f);
+            vk::RenderingAttachmentInfo shadowAttachmentInfo{};
+            shadowAttachmentInfo.imageView = shadowImages[imageIndex].getImageView();
+            shadowAttachmentInfo.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
+            shadowAttachmentInfo.loadOp = vk::AttachmentLoadOp::eClear;
+            shadowAttachmentInfo.storeOp = vk::AttachmentStoreOp::eStore;
+            shadowAttachmentInfo.clearValue = clearDepth;
+
+            vk::RenderingInfo renderingInfo{};
+            renderingInfo.renderArea.offset.x = 0;
+            renderingInfo.renderArea.offset.y = 0;
+            renderingInfo.renderArea.extent = swapChainExtent;
+            renderingInfo.layerCount = 1;
+            renderingInfo.pDepthAttachment = &shadowAttachmentInfo;
+
+            cmd.beginRendering(renderingInfo);
+
+            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, shadowPipeline);
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, shadowPipeline.getPipelineLayout(), 0, *descriptorSets[imageIndex], nullptr);
+            cmd.drawIndexedIndirect(*indirectBuffer, 0, drawCmds.size(), static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand)));
+
+            cmd.endRendering();
+        };
+
+        graph.addPass(shadowPass);
+
         // Main rendering pass: transition Undefined -> ColorAttachmentOptimal and record in the pass
         Gfx::RenderPassNode mainPass{};
         mainPass.name = "MainPass";
-        Gfx::RenderPassNode::AttachmentTransitionInfo mainColorTransition{ rhi.getSwapChain().getImages(), vk::ImageAspectFlagBits::eColor};
+        Gfx::RenderPassNode::AttachmentTransitionInfo mainColorTransition{ rhi.getSwapChain().getImages(), vk::ImageAspectFlagBits::eColor };
         mainColorTransition.oldLayout = vk::ImageLayout::eUndefined;
         mainColorTransition.newLayout = vk::ImageLayout::eColorAttachmentOptimal;
         mainColorTransition.srcAccessMask = {}; // from undefined
@@ -538,7 +667,7 @@ private:
         mainColorTransition.srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe;
         mainColorTransition.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
         mainPass.transitionInfos.emplace_back(mainColorTransition);
-        Gfx::RenderPassNode::AttachmentTransitionInfo mainDepthTransition{ rhi.getDepthImages(), vk::ImageAspectFlagBits::eDepth};
+        Gfx::RenderPassNode::AttachmentTransitionInfo mainDepthTransition{ rhi.getDepthImages(), vk::ImageAspectFlagBits::eDepth };
         mainDepthTransition.oldLayout = vk::ImageLayout::eUndefined;
         mainDepthTransition.newLayout = vk::ImageLayout::eDepthAttachmentOptimal;
         mainDepthTransition.srcAccessMask = {}; // from undefined
@@ -550,7 +679,7 @@ private:
         // record the same rendering commands previously inside recordCommandBuffer (beginRendering, bind pipeline, draw, endRendering)
         mainPass.recordFunc = [this](vk::raii::CommandBuffer& cmd, uint32_t imageIndex)
         {
-			updateUniformBuffer(imageIndex);
+            auto swapChainExtent = rhi.getSwapChainExtent();
 
             vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
             vk::RenderingAttachmentInfo colorAttachmentInfo{};
@@ -568,8 +697,6 @@ private:
             depthAttachmentInfo.storeOp = vk::AttachmentStoreOp::eDontCare;
             depthAttachmentInfo.clearValue = clearDepth;
 
-            auto swapChainExtent = rhi.getSwapChainExtent();
-
             vk::RenderingInfo renderingInfo{};
             renderingInfo.renderArea.offset.x = 0;
             renderingInfo.renderArea.offset.y = 0;
@@ -580,19 +707,24 @@ private:
             renderingInfo.pDepthAttachment = &depthAttachmentInfo;
 
             cmd.beginRendering(renderingInfo);
-            cmd.bindVertexBuffers(0, *vertexBuffer, { 0 });
-            cmd.bindIndexBuffer(*indexBuffer, 0, vk::IndexType::eUint32);
-            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, mainPipeline.getPipelineLayout(), 0, *descriptorSets[imageIndex], nullptr);
 
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, mainPipeline);
-
-            cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
-            cmd.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
-
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, mainPipeline.getPipelineLayout(), 0, *descriptorSets[imageIndex], nullptr);
             cmd.drawIndexedIndirect(*indirectBuffer, 0, drawCmds.size(), static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand)));
 
             cmd.endRendering();
         };
+
+        Gfx::RenderPassNode::AttachmentTransitionInfo shadowReadTransition{ {}, vk::ImageAspectFlagBits::eDepth };
+        shadowReadTransition.images = std::vector<vk::Image>(shadowImages.size());
+        for (size_t i = 0; i < shadowImages.size(); ++i) shadowReadTransition.images[i] = shadowImages[i];
+        shadowReadTransition.oldLayout = vk::ImageLayout::eDepthAttachmentOptimal;
+        shadowReadTransition.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        shadowReadTransition.srcAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+        shadowReadTransition.dstAccessMask = vk::AccessFlagBits2::eShaderRead;
+        shadowReadTransition.srcStageMask = vk::PipelineStageFlagBits2::eLateFragmentTests;
+        shadowReadTransition.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+        mainPass.transitionInfos.emplace_back(std::move(shadowReadTransition));
 
         graph.addPass(mainPass);
 
@@ -627,7 +759,11 @@ private:
         ubo.proj = glm::perspective(glm::radians(45.0f), static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height), 0.1f, 10.0f);
         ubo.proj[1][1] *= -1;
         ubo.rotation = glm::angleAxis(time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-		ubo.nLightDir = -glm::vec4(glm::normalize(glm::vec3(-1.0f)), 0.0f);
+		auto nLightDir = -glm::normalize(glm::vec3(-1.0f));
+		ubo.nLightDir = glm::vec4(nLightDir, 0.0f);
+        ubo.lightView = lookAt(nLightDir, glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        ubo.lightProj = glm::ortho(-3.0f, 3.0f, -3.0f, 3.0f, 0.1f, 10.0f);
+        ubo.lightProj[1][1] *= -1;
 
         memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
     }
@@ -661,6 +797,6 @@ int main() {
     catch (const std::exception& e) {
         return EXIT_FAILURE;
     }
-    
+
     return EXIT_SUCCESS;
 }

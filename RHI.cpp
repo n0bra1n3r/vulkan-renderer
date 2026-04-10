@@ -450,9 +450,6 @@ void RHI::initDepthResources()
     depthImageViewInfo.viewType = vk::ImageViewType::e2D;
     depthImageViewInfo.format = m_depthFormat;
     depthImageViewInfo.subresourceRange = { vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1 };
-    depthImageViewInfo.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eDepth;
-    depthImageViewInfo.subresourceRange.levelCount = 1;
-    depthImageViewInfo.subresourceRange.layerCount = 1;
 
     for (size_t i = 0; i < m_maxFramesInFlight; i++) {
         auto depthImage = vk::raii::Image(m_device, depthImageInfo);
@@ -561,7 +558,12 @@ Gfx::Image RHI::createImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryProp
     viewInfo.image = image;
     viewInfo.viewType = vk::ImageViewType::e2D;
     viewInfo.format = imageInfo.format;
-    viewInfo.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
+    viewInfo.subresourceRange.aspectMask = 
+        imageInfo.usage & vk::ImageUsageFlagBits::eDepthStencilAttachment 
+        ? vk::ImageAspectFlagBits::eDepth
+        : vk::ImageAspectFlagBits::eColor;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.layerCount = 1;
     
     vk::raii::ImageView imageView(m_device, viewInfo);
 
