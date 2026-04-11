@@ -694,7 +694,7 @@ Gfx::Pipeline RHI::createGraphicsPipeline(const Gfx::PipelineCreateInfo& createI
     pipelineInfo.pDepthStencilState = &depthStencil;
     pipelineInfo.layout = pipelineLayout;
 
-    vk::raii::Pipeline shadowPipeline(m_device, nullptr, pipelineInfo);
+    vk::raii::Pipeline pipeline(m_device, nullptr, pipelineInfo);
 
-	return Gfx::Pipeline(std::move(shadowPipeline), std::move(pipelineLayout), std::move(descriptorSetLayout));
+	return Gfx::Pipeline(std::move(pipeline), std::move(pipelineLayout), std::move(descriptorSetLayout));
 }
