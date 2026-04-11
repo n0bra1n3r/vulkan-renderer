@@ -483,7 +483,7 @@ Gfx::Buffer RHI::createBuffer(const vk::BufferCreateInfo& bufferInfo, vk::Memory
     return Gfx::Buffer(std::move(buffer), std::move(bufferMemory), bufferInfo.size);
 }
 
-void RHI::updateBuffer(const Buffer& buffer, void* contentData, size_t contentSize)
+void RHI::updateBuffer(const Buffer& buffer, const void* contentData, size_t contentSize)
 {
     vk::BufferCreateInfo stagingInfo{};
     stagingInfo.size = contentSize;
@@ -548,7 +548,7 @@ Gfx::Image RHI::createImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryProp
     return Gfx::Image(std::move(image), std::move(imageMemory), std::move(imageView), imageInfo.extent, imageInfo.format);
 }
 
-void RHI::updateImage(const Gfx::Image& image, void* contentData, size_t contentSize)
+void RHI::updateImage(const Gfx::Image& image, const void* contentData, size_t contentSize)
 {
     vk::BufferCreateInfo stagingInfo{};
     stagingInfo.size = contentSize;

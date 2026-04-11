@@ -62,26 +62,25 @@ namespace Gfx
 		vk::Extent2D getSwapChainExtent() const { return m_swapChainExtent; }
 
 		Buffer createBuffer(const vk::BufferCreateInfo& bufferInfo, vk::MemoryPropertyFlags memProperties = vk::MemoryPropertyFlagBits::eDeviceLocal);
-		void updateBuffer(const Buffer& buffer, void* contentData, size_t contentSize);
+		void updateBuffer(const Buffer& buffer, const void* contentData, size_t contentSize);
 
 		Image createImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryPropertyFlags properties = vk::MemoryPropertyFlagBits::eDeviceLocal);
-		void updateImage(const Gfx::Image& image, void* contentData, size_t contentSize);
+		void updateImage(const Gfx::Image& image, const void* contentData, size_t contentSize);
 
 		Pipeline createGraphicsPipeline(const PipelineCreateInfo& createInfo);
 
 		template<typename T>
-		void updateBuffer(const Buffer& buffer, T data) {
+		void updateBuffer(const Buffer& buffer, const T& data) {
 			updateBuffer(buffer, &data, sizeof(T));
 		}
 
 		template<typename T>
-		void updateBuffer(const Buffer& buffer, std::vector<T> data) {
+		void updateBuffer(const Buffer& buffer, const std::vector<T>& data) {
 			updateBuffer(buffer, data.data(), data.size() * sizeof(T));
 		}
 
-		template<typename T>
-		void updateImage(const Image& image, std::vector<T> data) {
-			updateImage(image, data.data(), data.size() * sizeof(T));
+		void updateImage(const Image& image, const std::vector<unsigned char>& data) {
+			updateImage(image, data.data(), data.size());
 		}
 
 	private:
