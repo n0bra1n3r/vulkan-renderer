@@ -593,6 +593,9 @@ Gfx::Pipeline RHI::createGraphicsPipeline(const Gfx::PipelineCreateInfo& createI
     std::vector<vk::Format> colorAttachmentFormats{};
 	std::vector<vk::PipelineColorBlendAttachmentState> colorBlendAttachments{};
 
+	colorAttachmentFormats.reserve(createInfo.colorAttachments.size());
+	colorBlendAttachments.reserve(createInfo.colorAttachments.size());
+
     for (auto& colorAttachment : createInfo.colorAttachments) {
         colorAttachmentFormats.emplace_back(colorAttachment.format);
 
@@ -621,6 +624,9 @@ Gfx::Pipeline RHI::createGraphicsPipeline(const Gfx::PipelineCreateInfo& createI
 
     std::vector<vk::PipelineShaderStageCreateInfo> shaderStages{};
     std::vector<vk::raii::ShaderModule> shaderModules{};
+
+	shaderStages.reserve(createInfo.shaders.size());
+	shaderModules.reserve(createInfo.shaders.size());
 
     for (auto& shader : createInfo.shaders) {
         auto code = readFile(shader.path);
