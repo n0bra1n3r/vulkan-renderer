@@ -56,9 +56,9 @@ namespace Gfx
 		const vk::raii::CommandPool& getCommandPool() const { return m_commandPool; }
 		vk::Format getSurfaceFormat() const { return m_surfaceFormat.format; }
 		vk::Format getDepthFormat() const { return m_depthFormat; }
-		const std::vector<vk::Image>& getDepthImages() const { return m_depthImages; }
+		const std::vector<vk::Image>& getDepthImages() const { return m_depthImageObjs; }
 		const vk::raii::ImageView& getSwapChainImageView(int index) const { return m_swapChainImageViews[index]; }
-		const vk::raii::ImageView& getDepthImageView(int index) const { return m_depthImageViews[index]; }
+		const vk::raii::ImageView& getDepthImageView(int index) const;
 		vk::Extent2D getSwapChainExtent() const { return m_swapChainExtent; }
 
 		Buffer createBuffer(const vk::BufferCreateInfo& bufferInfo, vk::MemoryPropertyFlags memProperties = vk::MemoryPropertyFlagBits::eDeviceLocal);
@@ -109,10 +109,8 @@ namespace Gfx
 		uint8_t m_maxFramesInFlight = 0;
 		std::vector<vk::raii::ImageView> m_swapChainImageViews{};
 		vk::Format m_depthFormat{};
-		std::vector<vk::Image> m_depthImages{};
-		std::vector<vk::raii::Image> m_depthImageRefs{};
-		std::vector<vk::raii::DeviceMemory> m_depthImageMemories{};
-		std::vector<vk::raii::ImageView> m_depthImageViews{};
+		std::vector<Gfx::Image> m_depthImages{};
+		std::vector<vk::Image> m_depthImageObjs{};
 		vk::raii::CommandPool m_commandPool = nullptr;
 	};
 }

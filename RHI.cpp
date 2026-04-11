@@ -446,30 +446,10 @@ void RHI::initDepthResources()
     depthImageInfo.arrayLayers = 1;
     depthImageInfo.usage = vk::ImageUsageFlagBits::eDepthStencilAttachment;
 
-    vk::ImageViewCreateInfo depthImageViewInfo{};
-    depthImageViewInfo.viewType = vk::ImageViewType::e2D;
-    depthImageViewInfo.format = m_depthFormat;
-    depthImageViewInfo.subresourceRange = { vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1 };
-
     for (size_t i = 0; i < m_maxFramesInFlight; i++) {
-        auto depthImage = vk::raii::Image(m_device, depthImageInfo);
-
-        depthImageViewInfo.image = depthImage;
-
-        auto memRequirements = depthImage.getMemoryRequirements();
-
-        vk::MemoryAllocateInfo allocInfo{};
-        allocInfo.allocationSize = memRequirements.size;
-        allocInfo.memoryTypeIndex = findMemoryType(m_physicalDevice, memRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
-
-        auto depthImageMemory = vk::raii::DeviceMemory(m_device, allocInfo);
-
-        depthImage.bindMemory(depthImageMemory, 0);
-
-        m_depthImages.emplace_back(*depthImage);
-        m_depthImageRefs.emplace_back(std::move(depthImage));
-        m_depthImageMemories.emplace_back(std::move(depthImageMemory));
-        m_depthImageViews.emplace_back(m_device, depthImageViewInfo);
+        auto depthImage = createImage(depthImageInfo);
+        m_depthImageObjs.emplace_back(*depthImage);
+        m_depthImages.emplace_back(std::move(depthImage));
     }
 }
 
@@ -480,6 +460,11 @@ void RHI::initCommandPool()
     poolInfo.queueFamilyIndex = m_graphicsFamily;
 
     m_commandPool = vk::raii::CommandPool(m_device, poolInfo);
+}
+
+const vk::raii::ImageView& RHI::getDepthImageView(int index) const
+{ 
+    return m_depthImages[index].getImageView();
 }
 
 Gfx::Buffer RHI::createBuffer(const vk::BufferCreateInfo& bufferInfo, vk::MemoryPropertyFlags memProperties)
