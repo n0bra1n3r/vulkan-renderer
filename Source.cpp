@@ -598,23 +598,21 @@ private:
         }
     }
 
-    // New: create and initialize the RenderGraph and add the passes used by the app
     void initRenderGraph()
     {
         // Shadow pass: render scene from light into depth buffer
-        Gfx::RenderPassNode shadowPass{};
-        shadowPass.name = "ShadowPass";
-        Gfx::RenderPassNode::AttachmentTransitionInfo shadowTransition{ {} , vk::ImageAspectFlagBits::eDepth };
-        // populate with the vk::Image handles for each per-frame shadow image
-        shadowTransition.images = std::vector<vk::Image>(shadowImages.size());
-        for (size_t i = 0; i < shadowImages.size(); ++i) shadowTransition.images[i] = shadowImages[i];
+        Gfx::RenderPassNode shadowPass{ "ShadowPass" };
+
+        Gfx::RenderPassNode::AttachmentTransitionInfo shadowTransition{ {}, vk::ImageAspectFlagBits::eDepth };
+        shadowTransition.images.resize(shadowImages.size()); // populate with the vk::Image handles for each per-frame shadow image
+        for (size_t i = 0; i < shadowImages.size(); ++i) shadowTransition.images[i] = *shadowImages[i];
         shadowTransition.oldLayout = vk::ImageLayout::eUndefined;
         shadowTransition.newLayout = vk::ImageLayout::eDepthAttachmentOptimal;
-        shadowTransition.srcAccessMask = {}; // from undefined
+        shadowTransition.srcAccessMask = vk::AccessFlagBits2::eNone;
         shadowTransition.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
         shadowTransition.srcStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests;
         shadowTransition.dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests;
-        shadowPass.transitionInfos.emplace_back(std::move(shadowTransition));
+        shadowPass.transitionInfos.emplace_back(shadowTransition);
 
         shadowPass.recordFunc = [this](vk::raii::CommandBuffer& cmd, uint32_t imageIndex)
         {
@@ -654,27 +652,36 @@ private:
 
         graph.addPass(shadowPass);
 
-        // Main rendering pass: transition Undefined -> ColorAttachmentOptimal and record in the pass
-        Gfx::RenderPassNode mainPass{};
-        mainPass.name = "MainPass";
+		// Main pass: render scene from camera, sampling shadow map
+        Gfx::RenderPassNode mainPass{ "MainPass" };
+
+		// Transition shadow image from depth attachment -> shader read for sampling in main pass
+        shadowTransition.oldLayout = vk::ImageLayout::eDepthAttachmentOptimal;
+        shadowTransition.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        shadowTransition.srcAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+        shadowTransition.dstAccessMask = vk::AccessFlagBits2::eShaderRead;
+        shadowTransition.srcStageMask = vk::PipelineStageFlagBits2::eLateFragmentTests;
+        shadowTransition.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+        mainPass.transitionInfos.emplace_back(std::move(shadowTransition));
+        
         Gfx::RenderPassNode::AttachmentTransitionInfo mainColorTransition{ rhi.getSwapChain().getImages(), vk::ImageAspectFlagBits::eColor };
         mainColorTransition.oldLayout = vk::ImageLayout::eUndefined;
         mainColorTransition.newLayout = vk::ImageLayout::eColorAttachmentOptimal;
-        mainColorTransition.srcAccessMask = {}; // from undefined
+        mainColorTransition.srcAccessMask = vk::AccessFlagBits2::eNone;
         mainColorTransition.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
         mainColorTransition.srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe;
         mainColorTransition.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
         mainPass.transitionInfos.emplace_back(mainColorTransition);
+
         Gfx::RenderPassNode::AttachmentTransitionInfo mainDepthTransition{ rhi.getDepthImages(), vk::ImageAspectFlagBits::eDepth };
         mainDepthTransition.oldLayout = vk::ImageLayout::eUndefined;
         mainDepthTransition.newLayout = vk::ImageLayout::eDepthAttachmentOptimal;
-        mainDepthTransition.srcAccessMask = {}; // from undefined
+        mainDepthTransition.srcAccessMask = vk::AccessFlagBits2::eNone;
         mainDepthTransition.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
         mainDepthTransition.srcStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests;
         mainDepthTransition.dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests;
 		mainPass.transitionInfos.emplace_back(std::move(mainDepthTransition));
 
-        // record the same rendering commands previously inside recordCommandBuffer (beginRendering, bind pipeline, draw, endRendering)
         mainPass.recordFunc = [this](vk::raii::CommandBuffer& cmd, uint32_t imageIndex)
         {
             auto swapChainExtent = rhi.getSwapChainExtent();
@@ -713,34 +720,20 @@ private:
             cmd.endRendering();
         };
 
-        Gfx::RenderPassNode::AttachmentTransitionInfo shadowReadTransition{ {}, vk::ImageAspectFlagBits::eDepth };
-        shadowReadTransition.images = std::vector<vk::Image>(shadowImages.size());
-        for (size_t i = 0; i < shadowImages.size(); ++i) shadowReadTransition.images[i] = shadowImages[i];
-        shadowReadTransition.oldLayout = vk::ImageLayout::eDepthAttachmentOptimal;
-        shadowReadTransition.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-        shadowReadTransition.srcAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
-        shadowReadTransition.dstAccessMask = vk::AccessFlagBits2::eShaderRead;
-        shadowReadTransition.srcStageMask = vk::PipelineStageFlagBits2::eLateFragmentTests;
-        shadowReadTransition.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
-        mainPass.transitionInfos.emplace_back(std::move(shadowReadTransition));
-
         graph.addPass(mainPass);
 
-        // Final transition pass: move from color attachment -> present.
-        Gfx::RenderPassNode presentTransition{};
-        presentTransition.name = "PresentTransition";
+		// Present transition pass: transition main color image from color attachment -> present for presentation to swap chain
+        Gfx::RenderPassNode presentTransition{ "PresentTransition" };
         mainColorTransition.oldLayout = vk::ImageLayout::eColorAttachmentOptimal;
         mainColorTransition.newLayout = vk::ImageLayout::ePresentSrcKHR;
         mainColorTransition.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
-        mainColorTransition.dstAccessMask = {};
+        mainColorTransition.dstAccessMask = vk::AccessFlagBits2::eNone;
         mainColorTransition.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
         mainColorTransition.dstStageMask = vk::PipelineStageFlagBits2::eBottomOfPipe;
 		presentTransition.transitionInfos.emplace_back(std::move(mainColorTransition));
-        presentTransition.recordFunc = nullptr; // no recording, just a layout transition
 
         graph.addPass(presentTransition);
 
-        // finally initialize (allocates per-image command buffers and per-frame sync objects)
         graph.init();
     }
 
@@ -767,7 +760,6 @@ private:
     }
 
     void drawFrame() {
-        // delegate frame orchestration to the render graph
         graph.executeFrame();
     }
 
