@@ -352,7 +352,6 @@ void RHI::initLogicalDevice() {
     features2.features.multiDrawIndirect = true;
 
     vk::PhysicalDeviceVulkan12Features vulkan12Features{};
-    vulkan12Features.bufferDeviceAddress = true;
     vulkan12Features.runtimeDescriptorArray = true;
     vulkan12Features.shaderSampledImageArrayNonUniformIndexing = true;
 
@@ -476,12 +475,6 @@ Gfx::Buffer RHI::createBuffer(const vk::BufferCreateInfo& bufferInfo, vk::Memory
     vk::MemoryAllocateInfo allocInfo{};
     allocInfo.allocationSize = memRequirements.size;
     allocInfo.memoryTypeIndex = findMemoryType(m_physicalDevice, memRequirements.memoryTypeBits, memProperties);
-
-    vk::MemoryAllocateFlagsInfo allocFlagsInfo{};
-    if (bufferInfo.usage & vk::BufferUsageFlagBits::eShaderDeviceAddress) {
-        allocFlagsInfo.flags = vk::MemoryAllocateFlagBits::eDeviceAddress;
-        allocInfo.pNext = &allocFlagsInfo;
-    }
 
     vk::raii::DeviceMemory bufferMemory(m_device, allocInfo);
 

@@ -481,9 +481,7 @@ private:
         bufferInfo.usage = vk::BufferUsageFlagBits::eUniformBuffer;
 
         for (size_t i = 0; i < rhi.getMaxFramesInFlight(); i++) {
-            Gfx::Buffer uniformBuffer = nullptr;
-            vk::raii::DeviceMemory uniformBufferMemory = nullptr;
-            uniformBuffer = rhi.createBuffer(bufferInfo,
+            auto uniformBuffer = rhi.createBuffer(bufferInfo,
                 vk::MemoryPropertyFlagBits::eHostVisible |
                 vk::MemoryPropertyFlagBits::eHostCoherent);
             uniformBuffer.map();
@@ -604,7 +602,7 @@ private:
     {
         // Shadow pass: render scene from light into depth buffer
         Gfx::RenderPassNode shadowPass{ "ShadowPass" };
-
+        
         Gfx::RenderPassNode::AttachmentTransitionInfo shadowTransition{ {}, vk::ImageAspectFlagBits::eDepth };
         shadowTransition.images.resize(shadowImages.size()); // populate with the vk::Image handles for each per-frame shadow image
         for (size_t i = 0; i < shadowImages.size(); ++i) shadowTransition.images[i] = *shadowImages[i];
