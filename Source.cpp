@@ -402,8 +402,10 @@ private:
             imageInfo.extent.width = texture.width;
             imageInfo.extent.height = texture.height;
 
-            textureImages.emplace_back(std::move(rhi.createImage(imageInfo)));
-            rhi.updateImage(textureImages.back(), texture.imageData);
+			auto textureImage = rhi.createImage(imageInfo);
+
+            rhi.updateImage(textureImage, texture.imageData);
+            textureImages.emplace_back(std::move(textureImage));
         }
 
         vk::PhysicalDeviceProperties properties = rhi.getPhysicalDevice().getProperties();

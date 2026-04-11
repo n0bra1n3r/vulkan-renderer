@@ -4,37 +4,6 @@
 
 namespace Gfx
 {
-	struct ShaderDesc
-	{
-		std::string path;
-		vk::ShaderStageFlagBits stage;
-	};
-
-	struct ColorAttachmentDesc
-	{
-		vk::Format format;
-		vk::ColorComponentFlags writeMask = 
-			vk::ColorComponentFlagBits::eR | 
-			vk::ColorComponentFlagBits::eG | 
-			vk::ColorComponentFlagBits::eB | 
-			vk::ColorComponentFlagBits::eA;
-	};
-
-	struct DepthAttachmentDesc
-	{
-		vk::Format format;
-	};
-
-	struct PipelineCreateInfo
-	{
-		std::vector<ShaderDesc> shaders;
-		std::vector<vk::VertexInputBindingDescription> vertexInputBindings;
-		std::vector<vk::VertexInputAttributeDescription> vertexInputAttributes;
-		std::vector<vk::DescriptorSetLayoutBinding> descriptorSetLayoutBindings;
-		std::vector<ColorAttachmentDesc> colorAttachments;
-		DepthAttachmentDesc depthAttachment;
-	};
-
 	class Pipeline
 	{
 	private:

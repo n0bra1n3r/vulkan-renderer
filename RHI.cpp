@@ -648,13 +648,12 @@ Gfx::Pipeline RHI::createGraphicsPipeline(const Gfx::PipelineCreateInfo& createI
         auto code = readFile(shader.path);
         auto module = createShaderModule(m_device, code);
 
-        shaderModules.emplace_back(std::move(module));
-
         vk::PipelineShaderStageCreateInfo shaderStageInfo{};
         shaderStageInfo.stage = shader.stage;
-        shaderStageInfo.module = shaderModules.back();
+        shaderStageInfo.module = module;
         shaderStageInfo.pName = "main";
 
+        shaderModules.emplace_back(std::move(module));
         shaderStages.emplace_back(std::move(shaderStageInfo));
 	}
 
