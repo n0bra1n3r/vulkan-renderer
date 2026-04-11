@@ -109,9 +109,8 @@ private:
     Gfx::Buffer indirectBuffer = nullptr;
     Gfx::Buffer storageBuffer = nullptr;
     std::vector<Gfx::Buffer> uniformBuffers;
-    std::vector<void*> uniformBuffersMapped;
     vk::raii::DescriptorPool descriptorPool = nullptr;
-    std::vector<vk::raii::DescriptorSet> descriptorSets;
+    std::vector<vk::raii::DescriptorSet> descriptorSets{};
 
     void initWindow() {
         glfwInit();
@@ -473,8 +472,7 @@ private:
 	}
 
     void createUniformBuffers() {
-        uniformBuffers.clear();
-        uniformBuffersMapped.clear();
+		uniformBuffers.reserve(rhi.getMaxFramesInFlight());
 
         vk::BufferCreateInfo bufferInfo{};
         bufferInfo.size = sizeof(UniformBufferObject);
@@ -486,7 +484,7 @@ private:
             uniformBuffer = rhi.createBuffer(bufferInfo,
                 vk::MemoryPropertyFlagBits::eHostVisible |
                 vk::MemoryPropertyFlagBits::eHostCoherent);
-            uniformBuffersMapped.emplace_back(uniformBuffer.map());
+            uniformBuffer.map();
             uniformBuffers.emplace_back(std::move(uniformBuffer));
         }
     }
@@ -765,7 +763,7 @@ private:
         ubo.lightProj = glm::ortho(-3.0f, 3.0f, -3.0f, 3.0f, 0.1f, 10.0f);
         ubo.lightProj[1][1] *= -1;
 
-        memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
+        memcpy(uniformBuffers[currentImage].getMappedData(), &ubo, sizeof(ubo));
     }
 
     void drawFrame() {

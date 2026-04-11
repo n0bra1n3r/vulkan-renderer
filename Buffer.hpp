@@ -23,12 +23,14 @@ namespace Gfx
         operator vk::Buffer() const { return *m_buffer; }
         vk::Buffer operator*() const { return *m_buffer; }
 
-        void* map() const;
-        void unmap() const;
+        void map();
+        void unmap();
+		void* getMappedData() const { return m_mappedData; }
 
     private:
         vk::raii::Buffer m_buffer;
         vk::raii::DeviceMemory m_bufferMemory;
         vk::DeviceSize m_size;
+		void* m_mappedData = nullptr;
     };
 }

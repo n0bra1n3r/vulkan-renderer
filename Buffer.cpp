@@ -9,10 +9,11 @@ Buffer::Buffer(vk::raii::Buffer&& buffer, vk::raii::DeviceMemory&& bufferMemory,
 {
 }
 
-void* Buffer::map() const {
-	return m_bufferMemory.mapMemory(0, m_size);
+void Buffer::map() {
+	m_mappedData = m_bufferMemory.mapMemory(0, m_size);
 }
 
-void Buffer::unmap() const {
+void Buffer::unmap() {
 	m_bufferMemory.unmapMemory();
+	m_mappedData = nullptr;
 }

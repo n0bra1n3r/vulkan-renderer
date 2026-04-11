@@ -515,8 +515,8 @@ void RHI::updateBuffer(const Buffer& buffer, void* contentData, size_t contentSi
         vk::MemoryPropertyFlagBits::eHostVisible |
         vk::MemoryPropertyFlagBits::eHostCoherent);
 
-    void* data = stagingBuffer.map();
-    memcpy(data, contentData, stagingInfo.size);
+    stagingBuffer.map();
+    memcpy(stagingBuffer.getMappedData(), contentData, stagingInfo.size);
     stagingBuffer.unmap();
 
     vk::CommandBufferAllocateInfo allocInfo{};
@@ -580,8 +580,8 @@ void RHI::updateImage(const Gfx::Image& image, void* contentData, size_t content
         vk::MemoryPropertyFlagBits::eHostVisible |
         vk::MemoryPropertyFlagBits::eHostCoherent);
 
-    void* data = stagingBuffer.map();
-    memcpy(data, contentData, stagingInfo.size);
+    stagingBuffer.map();
+    memcpy(stagingBuffer.getMappedData(), contentData, stagingInfo.size);
     stagingBuffer.unmap();
 
     vk::CommandBufferAllocateInfo allocInfo{};
