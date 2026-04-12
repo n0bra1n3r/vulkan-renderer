@@ -1,5 +1,10 @@
 #include "common.fxh"
 
+struct VertexOutput
+{
+    float4 sv_position : SV_Position;
+};
+
 ConstantBuffer<UniformBuffer> ubo : register(b0, space0);
 
 StructuredBuffer<StorageBuffer> ssbo : register(t1, space0);

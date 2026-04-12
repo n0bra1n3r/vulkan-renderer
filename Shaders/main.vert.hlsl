@@ -1,5 +1,15 @@
 #include "common.fxh"
 
+struct VertexOutput
+{
+    float4 sv_position : SV_Position;
+    float3 colour : COLOR0;
+    float3 normalWS : TEXCOORD0;
+    float2 texCoord : TEXCOORD1;
+    uint instanceID : TEXCOORD2;
+    float4 lightPos : TEXCOORD3;
+};
+
 ConstantBuffer<UniformBuffer> ubo : register(b0, space0);
 
 StructuredBuffer<StorageBuffer> ssbo : register(t1, space0);

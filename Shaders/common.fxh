@@ -6,16 +6,6 @@ struct VertexInput
     uint sv_instanceID : SV_InstanceID;
 };
 
-struct VertexOutput
-{
-    float4 sv_position : SV_Position;
-    float3 colour : COLOR0;
-    float3 normalWS : TEXCOORD0;
-    float2 texCoord : TEXCOORD1;
-    uint instanceID : TEXCOORD2;
-    float4 lightPos : TEXCOORD3;
-};
-
 struct UniformBuffer
 {
     float4x4 view;
