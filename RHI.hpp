@@ -79,7 +79,7 @@ namespace Gfx
 			updateBuffer(buffer, data.data(), data.size() * sizeof(T));
 		}
 
-		void updateImage(const Image& image, const std::vector<unsigned char>& data) {
+		void updateImage(const Image& image, const std::vector<uint8_t>& data) {
 			updateImage(image, data.data(), data.size());
 		}
 
