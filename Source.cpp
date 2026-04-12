@@ -499,19 +499,18 @@ private:
     }
 
     void createDescriptorPool() {
-        auto maxFrames = rhi.getMaxFramesInFlight();
-        auto combinedImageSamplersPerSet = static_cast<uint32_t>(textures.size()) + 1;
+        auto maxFramesInFlight = rhi.getMaxFramesInFlight();
 
         std::array<vk::DescriptorPoolSize, 4> poolSizes = {
-            vk::DescriptorPoolSize{ vk::DescriptorType::eUniformBuffer, maxFrames },
+            vk::DescriptorPoolSize{ vk::DescriptorType::eUniformBuffer, maxFramesInFlight },
             vk::DescriptorPoolSize{ vk::DescriptorType::eStorageBuffer, 1 },
-            vk::DescriptorPoolSize{ vk::DescriptorType::eCombinedImageSampler, combinedImageSamplersPerSet * maxFrames },
-            vk::DescriptorPoolSize{ vk::DescriptorType::eCombinedImageSampler, maxFrames },
+            vk::DescriptorPoolSize{ vk::DescriptorType::eCombinedImageSampler, static_cast<uint32_t>(textures.size()) },
+            vk::DescriptorPoolSize{ vk::DescriptorType::eCombinedImageSampler, maxFramesInFlight },
         };
 
         vk::DescriptorPoolCreateInfo poolInfo{};
         poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-        poolInfo.maxSets = maxFrames;
+        poolInfo.maxSets = maxFramesInFlight;
         poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
         poolInfo.pPoolSizes = poolSizes.data();
 
@@ -585,11 +584,10 @@ private:
             ssboWrite.dstSet = descriptorSets[i];
             imageWrite.dstSet = descriptorSets[i];
 
-            vk::DescriptorImageInfo perFrameShadowInfo = shadowImageInfo;
-            perFrameShadowInfo.imageView = shadowImages[i].getImageView();
+            shadowImageInfo.imageView = shadowImages[i].getImageView();
 
             shadowImageWrite.dstSet = descriptorSets[i];
-            shadowImageWrite.pImageInfo = &perFrameShadowInfo;
+            shadowImageWrite.pImageInfo = &shadowImageInfo;
 
             rhi.getDevice().updateDescriptorSets(uboWrite, {});
             rhi.getDevice().updateDescriptorSets(ssboWrite, {});

@@ -1,5 +1,5 @@
 #include "common.fxh"
 
-void main(VertexOutput input)
+void main()
 {
 }
