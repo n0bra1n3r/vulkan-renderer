@@ -503,8 +503,8 @@ private:
 
         std::array<vk::DescriptorPoolSize, 4> poolSizes = {
             vk::DescriptorPoolSize{ vk::DescriptorType::eUniformBuffer, maxFramesInFlight },
-            vk::DescriptorPoolSize{ vk::DescriptorType::eStorageBuffer, 1 },
-            vk::DescriptorPoolSize{ vk::DescriptorType::eCombinedImageSampler, static_cast<uint32_t>(textures.size()) },
+            vk::DescriptorPoolSize{ vk::DescriptorType::eStorageBuffer, maxFramesInFlight },
+            vk::DescriptorPoolSize{ vk::DescriptorType::eCombinedImageSampler, static_cast<uint32_t>(textures.size()) * maxFramesInFlight },
             vk::DescriptorPoolSize{ vk::DescriptorType::eCombinedImageSampler, maxFramesInFlight },
         };
 
