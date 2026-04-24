@@ -98,6 +98,7 @@ private:
     std::vector<vk::DrawIndexedIndirectCommand> drawCmds{};
 	std::vector<Instance> instances{};
 
+    Gfx::Pipeline particlePipeline = nullptr;
 	Gfx::Pipeline mainPipeline = nullptr;
     Gfx::Pipeline shadowPipeline = nullptr;
     std::vector<Gfx::Image> textureImages{};
@@ -127,6 +128,7 @@ private:
         loadFloor();
         loadModel();
 
+		createParticlePipeline();
 		createGraphicsPipeline();
         createShadowPipeline();
         // create and initialize the render graph (allocates per-image command-buffers and sync)
@@ -149,8 +151,19 @@ private:
         return std::vector<const char*>(glfwExtensions, glfwExtensions + glfwExtensionCount);
     }
 
+    void createParticlePipeline() {
+        Gfx::ComputePipelineCreateInfo pipelineCreateInfo{};
+        pipelineCreateInfo.shader = { "Shaders/particle.comp.spv", vk::ShaderStageFlagBits::eCompute };
+        pipelineCreateInfo.descriptorSetLayoutBindings = {
+            { 0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eCompute, nullptr },
+            { 1, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute, nullptr },
+        };
+
+        particlePipeline = rhi.createComputePipeline(pipelineCreateInfo);
+    }
+
     void createGraphicsPipeline() {
-		Gfx::PipelineCreateInfo pipelineCreateInfo{};
+		Gfx::GraphicsPipelineCreateInfo pipelineCreateInfo{};
         pipelineCreateInfo.shaders = {
             { "Shaders/main.vert.spv", vk::ShaderStageFlagBits::eVertex },
             { "Shaders/main.frag.spv", vk::ShaderStageFlagBits::eFragment },
@@ -170,7 +183,7 @@ private:
 	}
 
     void createShadowPipeline() {
-        Gfx::PipelineCreateInfo pipelineCreateInfo{};
+        Gfx::GraphicsPipelineCreateInfo pipelineCreateInfo{};
         pipelineCreateInfo.shaders = {
             { "Shaders/shadow.vert.spv", vk::ShaderStageFlagBits::eVertex },
             { "Shaders/shadow.frag.spv", vk::ShaderStageFlagBits::eFragment },

@@ -29,7 +29,7 @@ namespace Gfx
 		vk::Format format;
 	};
 
-	struct PipelineCreateInfo
+	struct GraphicsPipelineCreateInfo
 	{
 		std::vector<ShaderDesc> shaders;
 		std::vector<vk::VertexInputBindingDescription> vertexInputBindings;
@@ -37,6 +37,12 @@ namespace Gfx
 		std::vector<vk::DescriptorSetLayoutBinding> descriptorSetLayoutBindings;
 		std::vector<ColorAttachmentDesc> colorAttachments;
 		DepthAttachmentDesc depthAttachment;
+	};
+
+	struct ComputePipelineCreateInfo
+	{
+		ShaderDesc shader;
+		std::vector<vk::DescriptorSetLayoutBinding> descriptorSetLayoutBindings;
 	};
 
 	class RHI
@@ -67,7 +73,8 @@ namespace Gfx
 		Image createImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryPropertyFlags properties = vk::MemoryPropertyFlagBits::eDeviceLocal);
 		void updateImage(const Gfx::Image& image, const void* contentData, size_t contentSize);
 
-		Pipeline createGraphicsPipeline(const PipelineCreateInfo& createInfo);
+		Pipeline createGraphicsPipeline(const GraphicsPipelineCreateInfo& createInfo);
+		Pipeline createComputePipeline(const ComputePipelineCreateInfo& createInfo);
 
 		template<typename T>
 		void updateBuffer(const Buffer& buffer, const T& data) {
