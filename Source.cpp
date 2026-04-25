@@ -29,6 +29,8 @@
 
 #undef max
 
+const float PI = 3.14159265358979323846f;
+
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
 
@@ -125,6 +127,7 @@ private:
     void initVulkan() {
 		rhi.init("Vulkan Renderer", getRequiredExtensions(), glfwGetWin32Window(window));
 
+		loadParticles();
         loadFloor();
         loadModel();
 
@@ -201,6 +204,115 @@ private:
         shadowPipeline = rhi.createGraphicsPipeline(pipelineCreateInfo);
     }
 
+    std::vector<Vertex> generateSphere(int latSegments = 8, int lonSegments = 8, float radius = 0.5f)
+    {
+        std::vector<Vertex> vertices;
+
+        for (int y = 0; y <= latSegments; y++)
+        {
+            float v = float(y) / latSegments;
+            float theta = v * PI;
+
+            for (int x = 0; x <= lonSegments; x++)
+            {
+                float u = float(x) / lonSegments;
+                float phi = u * 2.0f * PI;
+
+                float sinTheta = sin(theta);
+                float cosTheta = cos(theta);
+                float sinPhi = sin(phi);
+                float cosPhi = cos(phi);
+
+                glm::vec3 pos{
+                    radius * sinTheta * cosPhi,
+                    radius * cosTheta,
+                    radius * sinTheta * sinPhi
+                };
+
+                glm::vec3 normal = glm::normalize(pos);
+
+                glm::vec2 uv{ u, 1.0f - v };
+
+                vertices.push_back({ pos, normal, uv });
+            }
+        }
+
+        return vertices;
+    }
+
+    std::vector<uint32_t> generateSphereIndices(int latSegments = 8, int lonSegments = 8)
+    {
+        std::vector<uint32_t> indices;
+
+        for (int y = 0; y < latSegments; y++)
+        {
+            for (int x = 0; x < lonSegments; x++)
+            {
+                uint32_t i0 = y * (lonSegments + 1) + x;
+                uint32_t i1 = i0 + 1;
+                uint32_t i2 = i0 + (lonSegments + 1);
+                uint32_t i3 = i2 + 1;
+
+                indices.emplace_back(i0);
+                indices.emplace_back(i1);
+                indices.emplace_back(i2);
+
+                indices.emplace_back(i1);
+                indices.emplace_back(i3);
+                indices.emplace_back(i2);
+            }
+        }
+
+        return indices;
+    }
+
+    void loadParticles()
+    {
+        auto sphere = generateSphere();
+		auto sphereIndices = generateSphereIndices();
+
+		uint32_t gridX = 3;
+        uint32_t gridY = 3;
+        uint32_t gridZ = 3;
+
+        vk::DrawIndexedIndirectCommand drawCmd{
+            static_cast<uint32_t>(sphereIndices.size()), // index count
+            gridX * gridY * gridZ, // instance count
+            static_cast<uint32_t>(indices.size()), // first index
+            static_cast<int32_t>(vertices.size()), // vertex offset
+            static_cast<uint32_t>(instances.size()) // first instance
+        };
+
+        drawCmds.emplace_back(std::move(drawCmd));
+
+        vertices.insert(vertices.end(), sphere.begin(), sphere.end());
+        indices.insert(indices.end(), sphereIndices.begin(), sphereIndices.end());
+
+        Texture texture{ { 255, 255, 255, 255 }, 1, 1 }; // white 1x1 texture
+
+		textures.resize(textures.size() + gridX * gridY * gridZ, std::move(texture));
+
+        glm::vec3 center{ -1, 0, 0.5 };
+
+        for (uint32_t i = 0; i < gridX; i++)
+        {
+            for (uint32_t j = 0; j < gridY; j++)
+            {
+                for (uint32_t k = 0; k < gridZ; k++)
+                {
+                    float f = 0.1f;
+					float x = i * f, y = j * f, z = k * f;
+
+                    Instance instance{};
+                    instance.model = glm::translate(glm::mat4(1.0f), center + glm::vec3(x, y, z)) * glm::scale(glm::mat4(1.0f), glm::vec3(0.0625));
+                    instance.colour = glm::vec3(1.0f, 1.0f, 0.0f);
+
+                    instances.emplace_back(std::move(instance));
+                }
+            }
+        }
+    }
+
     void loadFloor()
     {
         std::vector<Vertex> quad{
@@ -219,7 +331,7 @@ private:
             1, // instance count
             static_cast<uint32_t>(indices.size()), // first index
             static_cast<int32_t>(vertices.size()), // vertex offset
-            static_cast<uint32_t>(drawCmds.size()) // first instance
+            static_cast<uint32_t>(instances.size()) // first instance
 		};
 
         drawCmds.emplace_back(std::move(drawCmd));
@@ -368,7 +480,7 @@ private:
                     1, // instance count
                     static_cast<uint32_t>(indices.size()), // first index
                     static_cast<int32_t>(vertices.size()), // vertex offset
-                    static_cast<uint32_t>(drawCmds.size()) // first instance
+                    static_cast<uint32_t>(instances.size()) // first instance
                 };
 
                 drawCmd.indexCount = LoadPrimitive(model, primitive);
@@ -535,7 +647,7 @@ private:
         vk::DescriptorBufferInfo storageBufferInfo{};
         storageBufferInfo.buffer = storageBuffer;
         storageBufferInfo.offset = 0;
-        storageBufferInfo.range = instances.size() * sizeof(Instance);
+        storageBufferInfo.range = sizeof(instances[0]) * instances.size();
 
         vk::DescriptorBufferInfo uboBufferInfo{};
         uboBufferInfo.offset = 0;
@@ -613,7 +725,7 @@ private:
     {
         // Shadow pass: render scene from light into depth buffer
         Gfx::RenderPassNode shadowPass{ "ShadowPass" };
-        
+
         Gfx::RenderPassNode::AttachmentTransitionInfo shadowTransition{ {}, vk::ImageAspectFlagBits::eDepth };
         shadowTransition.images.resize(shadowImages.size()); // populate with the vk::Image handles for each per-frame shadow image
         for (size_t i = 0; i < shadowImages.size(); ++i) shadowTransition.images[i] = *shadowImages[i];
@@ -674,7 +786,7 @@ private:
         shadowTransition.srcStageMask = vk::PipelineStageFlagBits2::eLateFragmentTests;
         shadowTransition.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
         mainPass.transitionInfos.emplace_back(std::move(shadowTransition));
-        
+
         Gfx::RenderPassNode::AttachmentTransitionInfo mainColorTransition{ rhi.getSwapChain().getImages(), vk::ImageAspectFlagBits::eColor };
         mainColorTransition.oldLayout = vk::ImageLayout::eUndefined;
         mainColorTransition.newLayout = vk::ImageLayout::eColorAttachmentOptimal;
