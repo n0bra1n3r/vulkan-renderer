@@ -696,7 +696,7 @@ Gfx::Pipeline RHI::createGraphicsPipeline(const Gfx::GraphicsPipelineCreateInfo&
 
     vk::raii::Pipeline pipeline(m_device, nullptr, pipelineInfo);
 
-	return Gfx::Pipeline(Gfx::Pipeline::Type::Graphics, std::move(pipeline), std::move(pipelineLayout), std::move(descriptorSetLayout));
+	return Gfx::Pipeline(std::move(pipeline), std::move(pipelineLayout), std::move(descriptorSetLayout));
 }
 
 Gfx::Pipeline RHI::createComputePipeline(const Gfx::ComputePipelineCreateInfo& createInfo)
@@ -727,5 +727,5 @@ Gfx::Pipeline RHI::createComputePipeline(const Gfx::ComputePipelineCreateInfo& c
 
     vk::raii::Pipeline pipeline(m_device, nullptr, pipelineInfo);
 
-    return Gfx::Pipeline(Gfx::Pipeline::Type::Compute, std::move(pipeline), std::move(pipelineLayout), std::move(descriptorSetLayout));
+    return Gfx::Pipeline(std::move(pipeline), std::move(pipelineLayout), std::move(descriptorSetLayout));
 }

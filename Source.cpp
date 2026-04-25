@@ -2,6 +2,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <random>
 #include <stdexcept>
 #include <chrono>
 
@@ -33,6 +34,11 @@ const float PI = 3.14159265358979323846f;
 
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
+
+const uint32_t PARTICLE_GRID_X = 3;
+const uint32_t PARTICLE_GRID_Y = 3;
+const uint32_t PARTICLE_GRID_Z = 3;
+const uint32_t PARTICLE_COUNT = PARTICLE_GRID_X * PARTICLE_GRID_Y * PARTICLE_GRID_Z;
 
 struct Vertex
 {
@@ -67,6 +73,8 @@ struct Instance
 {
     glm::mat4 model;
     glm::vec3 colour;
+    glm::vec3 particleOrbit;
+    glm::vec3 particleOffset;
 };
 
 struct UniformBufferObject
@@ -77,6 +85,9 @@ struct UniformBufferObject
     glm::mat4 lightProj;
 	glm::quat rotation;
     glm::vec4 nLightDir;
+    uint32_t particleCount;
+	float time;
+    glm::uvec2 pad;
 };
 
 class HelloTriangleApplication {
@@ -113,7 +124,8 @@ private:
     Gfx::Buffer storageBuffer = nullptr;
     std::vector<Gfx::Buffer> uniformBuffers;
     vk::raii::DescriptorPool descriptorPool = nullptr;
-    std::vector<vk::raii::DescriptorSet> descriptorSets{};
+    std::vector<vk::raii::DescriptorSet> computeDescriptorSets{};
+    std::vector<vk::raii::DescriptorSet> graphicsDescriptorSets{};
 
     void initWindow() {
         glfwInit();
@@ -143,7 +155,8 @@ private:
         createUniformBuffers();
         createStorageBuffer();
 		createDescriptorPool();
-        createDescriptorSets();
+		createComputeDescriptorSets();
+        createGraphicsDescriptorSets();
 
         initRenderGraph();
     }
@@ -271,13 +284,9 @@ private:
         auto sphere = generateSphere();
 		auto sphereIndices = generateSphereIndices();
 
-		uint32_t gridX = 3;
-        uint32_t gridY = 3;
-        uint32_t gridZ = 3;
-
         vk::DrawIndexedIndirectCommand drawCmd{
             static_cast<uint32_t>(sphereIndices.size()), // index count
-            gridX * gridY * gridZ, // instance count
+            PARTICLE_COUNT, // instance count
             static_cast<uint32_t>(indices.size()), // first index
             static_cast<int32_t>(vertices.size()), // vertex offset
             static_cast<uint32_t>(instances.size()) // first instance
@@ -290,22 +299,33 @@ private:
 
         Texture texture{ { 255, 255, 255, 255 }, 1, 1 }; // white 1x1 texture
 
-		textures.resize(textures.size() + gridX * gridY * gridZ, std::move(texture));
+		textures.resize(textures.size() + PARTICLE_COUNT, std::move(texture));
+
+        std::mt19937 rng(std::random_device{}());
 
         glm::vec3 center{ -1, 0, 0.5 };
 
-        for (uint32_t i = 0; i < gridX; i++)
+        for (uint32_t i = 0; i < PARTICLE_GRID_X; i++)
         {
-            for (uint32_t j = 0; j < gridY; j++)
+            for (uint32_t j = 0; j < PARTICLE_GRID_Y; j++)
             {
-                for (uint32_t k = 0; k < gridZ; k++)
+                for (uint32_t k = 0; k < PARTICLE_GRID_Z; k++)
                 {
                     float f = 0.1f;
 					float x = i * f, y = j * f, z = k * f;
+                    auto nz = std::uniform_real_distribution<float>(-1, 1)(rng);
+                    auto nt = std::uniform_real_distribution<float>(0, 2 * PI)(rng);
+                    auto nr = sqrtf(1.0f - z * z);
+					auto orbit = std::uniform_real_distribution<float>(0.125, 0.25)(rng);
+                    auto scale = std::uniform_real_distribution<float>(0.03125, 0.0625)(rng);
+                    auto r = std::uniform_real_distribution<float>(0, 1)(rng);
+                    auto g = std::uniform_real_distribution<float>(0, 1)(rng);
+                    auto b = std::uniform_real_distribution<float>(0, 1)(rng);
 
                     Instance instance{};
-                    instance.model = glm::translate(glm::mat4(1.0f), center + glm::vec3(x, y, z)) * glm::scale(glm::mat4(1.0f), glm::vec3(0.0625));
-                    instance.colour = glm::vec3(1.0f, 1.0f, 0.0f);
+                    instance.model = glm::translate(glm::mat4(1.0f), center + glm::vec3(x, y, z)) * glm::scale(glm::mat4(1.0f), glm::vec3(scale));
+                    instance.colour = glm::vec3(r, g, b);
+					instance.particleOrbit = glm::vec3(nr * cosf(nt), nr * sinf(nt), nz) * orbit;
 
                     instances.emplace_back(std::move(instance));
                 }
@@ -627,22 +647,66 @@ private:
         auto maxFramesInFlight = rhi.getMaxFramesInFlight();
 
         std::array<vk::DescriptorPoolSize, 4> poolSizes = {
-            vk::DescriptorPoolSize{ vk::DescriptorType::eUniformBuffer, maxFramesInFlight },
-            vk::DescriptorPoolSize{ vk::DescriptorType::eStorageBuffer, maxFramesInFlight },
+            // *2 so graphics sets AND compute sets both fit
+            vk::DescriptorPoolSize{ vk::DescriptorType::eUniformBuffer, maxFramesInFlight * 2u },
+            vk::DescriptorPoolSize{ vk::DescriptorType::eStorageBuffer, maxFramesInFlight * 2u },
             vk::DescriptorPoolSize{ vk::DescriptorType::eCombinedImageSampler, static_cast<uint32_t>(textures.size()) * maxFramesInFlight },
             vk::DescriptorPoolSize{ vk::DescriptorType::eCombinedImageSampler, maxFramesInFlight },
         };
 
         vk::DescriptorPoolCreateInfo poolInfo{};
         poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-        poolInfo.maxSets = maxFramesInFlight;
+        poolInfo.maxSets = maxFramesInFlight * 2u; // graphics + compute
         poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
         poolInfo.pPoolSizes = poolSizes.data();
 
         descriptorPool = vk::raii::DescriptorPool(rhi.getDevice(), poolInfo);
     }
 
-    void createDescriptorSets() {
+    void createComputeDescriptorSets() {
+        auto maxFramesInFlight = rhi.getMaxFramesInFlight();
+
+        std::vector<vk::DescriptorSetLayout> layouts(maxFramesInFlight,
+            *particlePipeline.getDescriptorSetLayout());
+
+        vk::DescriptorSetAllocateInfo allocInfo{};
+        allocInfo.descriptorPool = descriptorPool;
+        allocInfo.descriptorSetCount = static_cast<uint32_t>(layouts.size());
+        allocInfo.pSetLayouts = layouts.data();
+
+        computeDescriptorSets = rhi.getDevice().allocateDescriptorSets(allocInfo);
+
+        for (size_t i = 0; i < maxFramesInFlight; i++) {
+            vk::DescriptorBufferInfo uboInfo{};
+            uboInfo.buffer = uniformBuffers[i];
+            uboInfo.offset = 0;
+            uboInfo.range = sizeof(UniformBufferObject);
+
+            vk::DescriptorBufferInfo ssboInfo{};
+            ssboInfo.buffer = storageBuffer;
+            ssboInfo.offset = 0;
+            ssboInfo.range = sizeof(instances[0]) * instances.size();
+
+            vk::WriteDescriptorSet uboWrite{};
+            uboWrite.dstSet = computeDescriptorSets[i];
+            uboWrite.dstBinding = 0;
+            uboWrite.descriptorCount = 1;
+            uboWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
+            uboWrite.pBufferInfo = &uboInfo;
+
+            vk::WriteDescriptorSet ssboWrite{};
+            ssboWrite.dstSet = computeDescriptorSets[i];
+            ssboWrite.dstBinding = 1;
+            ssboWrite.descriptorCount = 1;
+            ssboWrite.descriptorType = vk::DescriptorType::eStorageBuffer;
+            ssboWrite.pBufferInfo = &ssboInfo;
+
+            rhi.getDevice().updateDescriptorSets(uboWrite, {});
+            rhi.getDevice().updateDescriptorSets(ssboWrite, {});
+        }
+    }
+
+    void createGraphicsDescriptorSets() {
         // storage buffer descriptor info (same buffer for all sets)
         vk::DescriptorBufferInfo storageBufferInfo{};
         storageBufferInfo.buffer = storageBuffer;
@@ -701,17 +765,17 @@ private:
         allocInfo.descriptorSetCount = static_cast<uint32_t>(layouts.size());
         allocInfo.pSetLayouts = layouts.data();
 
-        descriptorSets = rhi.getDevice().allocateDescriptorSets(allocInfo);
+        graphicsDescriptorSets = rhi.getDevice().allocateDescriptorSets(allocInfo);
 
         for (size_t i = 0; i < rhi.getMaxFramesInFlight(); i++) {
             uboBufferInfo.buffer = uniformBuffers[i];
-            uboWrite.dstSet = descriptorSets[i];
-            ssboWrite.dstSet = descriptorSets[i];
-            imageWrite.dstSet = descriptorSets[i];
+            uboWrite.dstSet = graphicsDescriptorSets[i];
+            ssboWrite.dstSet = graphicsDescriptorSets[i];
+            imageWrite.dstSet = graphicsDescriptorSets[i];
 
             shadowImageInfo.imageView = shadowImages[i].getImageView();
 
-            shadowImageWrite.dstSet = descriptorSets[i];
+            shadowImageWrite.dstSet = graphicsDescriptorSets[i];
             shadowImageWrite.pImageInfo = &shadowImageInfo;
 
             rhi.getDevice().updateDescriptorSets(uboWrite, {});
@@ -723,6 +787,41 @@ private:
 
     void initRenderGraph()
     {
+        Gfx::RenderPassNode particlePass{ "ParticlePass" };
+
+        particlePass.recordFunc = [this](vk::raii::CommandBuffer& cmd, uint32_t imageIndex)
+        {
+            cmd.bindPipeline(vk::PipelineBindPoint::eCompute, particlePipeline);
+
+            cmd.bindDescriptorSets(
+                vk::PipelineBindPoint::eCompute,
+                particlePipeline.getPipelineLayout(),
+                0,
+                *computeDescriptorSets[imageIndex],
+                nullptr);
+
+            // shader uses [numthreads(64,1,1)], so ceil(instanceCount / 64) groups in X
+            cmd.dispatch((PARTICLE_COUNT + 63) / 64, 1, 1);
+
+            // wait for compute SSBO writes before vertex shader reads them
+            vk::BufferMemoryBarrier2 barrier{};
+            barrier.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+            barrier.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
+            barrier.dstStageMask = vk::PipelineStageFlagBits2::eVertexShader;
+            barrier.dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead;
+            barrier.buffer = storageBuffer;
+            barrier.offset = 0;
+            barrier.size = sizeof(instances[0]) * instances.size();
+
+            vk::DependencyInfo dep{};
+            dep.bufferMemoryBarrierCount = 1;
+            dep.pBufferMemoryBarriers = &barrier;
+            cmd.pipelineBarrier2(dep);
+        };
+
+        graph.addPass(particlePass);
+
+
         // Shadow pass: render scene from light into depth buffer
         Gfx::RenderPassNode shadowPass{ "ShadowPass" };
 
@@ -767,7 +866,7 @@ private:
             cmd.beginRendering(renderingInfo);
 
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, shadowPipeline);
-            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, shadowPipeline.getPipelineLayout(), 0, *descriptorSets[imageIndex], nullptr);
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, shadowPipeline.getPipelineLayout(), 0, *graphicsDescriptorSets[imageIndex], nullptr);
             cmd.drawIndexedIndirect(*indirectBuffer, 0, drawCmds.size(), static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand)));
 
             cmd.endRendering();
@@ -837,7 +936,7 @@ private:
             cmd.beginRendering(renderingInfo);
 
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, mainPipeline);
-            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, mainPipeline.getPipelineLayout(), 0, *descriptorSets[imageIndex], nullptr);
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, mainPipeline.getPipelineLayout(), 0, *graphicsDescriptorSets[imageIndex], nullptr);
             cmd.drawIndexedIndirect(*indirectBuffer, 0, drawCmds.size(), static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand)));
 
             cmd.endRendering();
@@ -878,6 +977,8 @@ private:
         ubo.lightView = lookAt(nLightDir, glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
         ubo.lightProj = glm::ortho(-3.0f, 3.0f, -3.0f, 3.0f, 0.1f, 10.0f);
         ubo.lightProj[1][1] *= -1;
+		ubo.particleCount = PARTICLE_COUNT;
+		ubo.time = time;
 
         memcpy(uniformBuffers[currentImage].getMappedData(), &ubo, sizeof(ubo));
     }
