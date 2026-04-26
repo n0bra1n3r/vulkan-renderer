@@ -122,7 +122,7 @@ private:
     Gfx::Buffer indexBuffer = nullptr;
     Gfx::Buffer indirectBuffer = nullptr;
     Gfx::Buffer storageBuffer = nullptr;
-    std::vector<Gfx::Buffer> uniformBuffers;
+    std::vector<Gfx::Buffer> uniformBuffers{};
     vk::raii::DescriptorPool descriptorPool = nullptr;
     std::vector<vk::raii::DescriptorSet> computeDescriptorSets{};
     std::vector<vk::raii::DescriptorSet> graphicsDescriptorSets{};
@@ -217,29 +217,29 @@ private:
         shadowPipeline = rhi.createGraphicsPipeline(pipelineCreateInfo);
     }
 
-    std::vector<Vertex> generateSphere(int latSegments = 8, int lonSegments = 8, float radius = 0.5f)
+    std::vector<Vertex> generateSphere(uint32_t latSegments = 8, uint32_t lonSegments = 8)
     {
-        std::vector<Vertex> vertices;
+        std::vector<Vertex> vertices{};
 
-        for (int y = 0; y <= latSegments; y++)
+        for (uint32_t y = 0; y <= latSegments; y++)
         {
-            float v = float(y) / latSegments;
-            float theta = v * PI;
+            auto v = float(y) / latSegments;
+            auto theta = v * PI;
 
-            for (int x = 0; x <= lonSegments; x++)
+            for (uint32_t x = 0; x <= lonSegments; x++)
             {
-                float u = float(x) / lonSegments;
-                float phi = u * 2.0f * PI;
+                auto u = float(x) / lonSegments;
+                auto phi = u * 2.0f * PI;
 
-                float sinTheta = sin(theta);
-                float cosTheta = cos(theta);
-                float sinPhi = sin(phi);
-                float cosPhi = cos(phi);
+                auto sinTheta = sin(theta);
+                auto cosTheta = cos(theta);
+                auto sinPhi = sin(phi);
+                auto cosPhi = cos(phi);
 
                 glm::vec3 pos{
-                    radius * sinTheta * cosPhi,
-                    radius * cosTheta,
-                    radius * sinTheta * sinPhi
+                    0.5 * sinTheta * cosPhi,
+                    0.5 * cosTheta,
+                    0.5 * sinTheta * sinPhi
                 };
 
                 glm::vec3 normal = glm::normalize(pos);
@@ -253,18 +253,18 @@ private:
         return vertices;
     }
 
-    std::vector<uint32_t> generateSphereIndices(int latSegments = 8, int lonSegments = 8)
+    std::vector<uint32_t> generateSphereIndices(uint32_t latSegments = 8, uint32_t lonSegments = 8)
     {
-        std::vector<uint32_t> indices;
+        std::vector<uint32_t> indices{};
 
-        for (int y = 0; y < latSegments; y++)
+        for (uint32_t y = 0; y < latSegments; y++)
         {
-            for (int x = 0; x < lonSegments; x++)
+            for (uint32_t x = 0; x < lonSegments; x++)
             {
-                uint32_t i0 = y * (lonSegments + 1) + x;
-                uint32_t i1 = i0 + 1;
-                uint32_t i2 = i0 + (lonSegments + 1);
-                uint32_t i3 = i2 + 1;
+                auto i0 = y * (lonSegments + 1) + x;
+                auto i1 = i0 + 1;
+                auto i2 = i0 + (lonSegments + 1);
+                auto i3 = i2 + 1;
 
                 indices.emplace_back(i0);
                 indices.emplace_back(i1);
@@ -313,14 +313,14 @@ private:
                 {
                     float f = 0.1f;
 					float x = i * f, y = j * f, z = k * f;
-                    auto nz = std::uniform_real_distribution<float>(-1, 1)(rng);
-                    auto nt = std::uniform_real_distribution<float>(0, 2 * PI)(rng);
+                    auto nz = std::uniform_real_distribution<float>{ -1, 1 }(rng);
+                    auto nt = std::uniform_real_distribution<float>{ 0, 2 * PI }(rng);
                     auto nr = sqrtf(1.0f - z * z);
-					auto orbit = std::uniform_real_distribution<float>(0.125, 0.25)(rng);
-                    auto scale = std::uniform_real_distribution<float>(0.03125, 0.0625)(rng);
-                    auto r = std::uniform_real_distribution<float>(0, 1)(rng);
-                    auto g = std::uniform_real_distribution<float>(0, 1)(rng);
-                    auto b = std::uniform_real_distribution<float>(0, 1)(rng);
+                    auto orbit = std::uniform_real_distribution<float>{ 0.125, 0.25 }(rng);
+                    auto scale = std::uniform_real_distribution<float>{ 0.03125, 0.0625 }(rng);
+                    auto r = std::uniform_real_distribution<float>{ 0, 1 }(rng);
+                    auto g = std::uniform_real_distribution<float>{ 0, 1 }(rng);
+                    auto b = std::uniform_real_distribution<float>{ 0, 1 }(rng);
 
                     Instance instance{};
                     instance.model = glm::translate(glm::mat4(1.0f), center + glm::vec3(x, y, z)) * glm::scale(glm::mat4(1.0f), glm::vec3(scale));
@@ -789,6 +789,15 @@ private:
     {
         Gfx::RenderPassNode particlePass{ "ParticlePass" };
 
+        // wait for compute SSBO writes before vertex shader reads them
+		Gfx::RenderPassNode::BufferTransitionInfo particleTransition{};
+		particleTransition.buffers.resize(rhi.getMaxFramesInFlight(), *storageBuffer);
+        particleTransition.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
+        particleTransition.dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead;
+        particleTransition.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+        particleTransition.dstStageMask = vk::PipelineStageFlagBits2::eVertexShader;
+		particlePass.bufferInfos.emplace_back(particleTransition);
+
         particlePass.recordFunc = [this](vk::raii::CommandBuffer& cmd, uint32_t imageIndex)
         {
             cmd.bindPipeline(vk::PipelineBindPoint::eCompute, particlePipeline);
@@ -802,21 +811,6 @@ private:
 
             // shader uses [numthreads(64,1,1)], so ceil(instanceCount / 64) groups in X
             cmd.dispatch((PARTICLE_COUNT + 63) / 64, 1, 1);
-
-            // wait for compute SSBO writes before vertex shader reads them
-            vk::BufferMemoryBarrier2 barrier{};
-            barrier.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
-            barrier.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
-            barrier.dstStageMask = vk::PipelineStageFlagBits2::eVertexShader;
-            barrier.dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead;
-            barrier.buffer = storageBuffer;
-            barrier.offset = 0;
-            barrier.size = sizeof(instances[0]) * instances.size();
-
-            vk::DependencyInfo dep{};
-            dep.bufferMemoryBarrierCount = 1;
-            dep.pBufferMemoryBarriers = &barrier;
-            cmd.pipelineBarrier2(dep);
         };
 
         graph.addPass(particlePass);
@@ -834,7 +828,7 @@ private:
         shadowTransition.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
         shadowTransition.srcStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests;
         shadowTransition.dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests;
-        shadowPass.transitionInfos.emplace_back(shadowTransition);
+        shadowPass.attachmentInfos.emplace_back(shadowTransition);
 
         shadowPass.recordFunc = [this](vk::raii::CommandBuffer& cmd, uint32_t imageIndex)
         {
@@ -884,7 +878,7 @@ private:
         shadowTransition.dstAccessMask = vk::AccessFlagBits2::eShaderRead;
         shadowTransition.srcStageMask = vk::PipelineStageFlagBits2::eLateFragmentTests;
         shadowTransition.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
-        mainPass.transitionInfos.emplace_back(std::move(shadowTransition));
+        mainPass.attachmentInfos.emplace_back(std::move(shadowTransition));
 
         Gfx::RenderPassNode::AttachmentTransitionInfo mainColorTransition{ rhi.getSwapChain().getImages(), vk::ImageAspectFlagBits::eColor };
         mainColorTransition.oldLayout = vk::ImageLayout::eUndefined;
@@ -893,7 +887,7 @@ private:
         mainColorTransition.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
         mainColorTransition.srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe;
         mainColorTransition.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
-        mainPass.transitionInfos.emplace_back(mainColorTransition);
+        mainPass.attachmentInfos.emplace_back(mainColorTransition);
 
         Gfx::RenderPassNode::AttachmentTransitionInfo mainDepthTransition{ rhi.getDepthImages(), vk::ImageAspectFlagBits::eDepth };
         mainDepthTransition.oldLayout = vk::ImageLayout::eUndefined;
@@ -902,7 +896,7 @@ private:
         mainDepthTransition.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
         mainDepthTransition.srcStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests;
         mainDepthTransition.dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests;
-		mainPass.transitionInfos.emplace_back(std::move(mainDepthTransition));
+		mainPass.attachmentInfos.emplace_back(std::move(mainDepthTransition));
 
         mainPass.recordFunc = [this](vk::raii::CommandBuffer& cmd, uint32_t imageIndex)
         {
@@ -952,7 +946,7 @@ private:
         mainColorTransition.dstAccessMask = vk::AccessFlagBits2::eNone;
         mainColorTransition.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
         mainColorTransition.dstStageMask = vk::PipelineStageFlagBits2::eBottomOfPipe;
-		presentTransition.transitionInfos.emplace_back(std::move(mainColorTransition));
+		presentTransition.attachmentInfos.emplace_back(std::move(mainColorTransition));
 
         graph.addPass(presentTransition);
 

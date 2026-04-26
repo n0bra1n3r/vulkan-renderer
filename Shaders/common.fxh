@@ -25,7 +25,6 @@ struct StorageBuffer
     float3 colour;
     float3 particleOrbit;
     float3 particleOffset;
-    uint isShadowless;
 };
 
 float3 rotateFloat3(float3 v, float4 q)
