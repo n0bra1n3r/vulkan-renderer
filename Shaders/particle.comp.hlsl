@@ -14,11 +14,6 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     float3 orbit = ssbo[tid.x].particleOrbit;
     float radius = length(orbit);
-    if (radius < 1e-6)
-    {
-        ssbo[tid.x].particleOffset = float3(0.0, 0.0, 0.0);
-        return;
-    }
 
     // Orbit plane normal is the normalized particleOrbit vector.
     float3 normal = orbit / radius;
