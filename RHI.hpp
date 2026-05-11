@@ -1,5 +1,6 @@
 #pragma once
 
+#include <variant>
 #include <vulkan/vulkan_raii.hpp>
 
 namespace Gfx
@@ -45,6 +46,37 @@ namespace Gfx
 		std::vector<vk::DescriptorSetLayoutBinding> descriptorSetLayoutBindings;
 	};
 
+	// Describes a single descriptor binding within a DescriptorSetConfig.
+	// data holds either:
+	//   - vector<DescriptorBufferInfo>: one entry per frame, or a single entry reused for all frames
+	//   - vector<vector<DescriptorImageInfo>>: one inner vector per frame, or a single entry reused for all frames
+	struct DescriptorBinding
+	{
+		uint32_t binding;
+		vk::DescriptorType type;
+		std::variant<
+			std::vector<vk::DescriptorBufferInfo>,             // buffer data, indexed by frame
+			std::vector<std::vector<vk::DescriptorImageInfo>>  // image data, indexed by frame
+		> data;
+	};
+
+	// Describes all descriptor sets to allocate for one pipeline stage.
+	struct DescriptorSetConfig
+	{
+		vk::DescriptorSetLayout layout; // the layout to allocate against
+		uint32_t setCount;              // number of sets to allocate (typically maxFramesInFlight)
+		std::vector<DescriptorBinding> bindings;
+	};
+
+	// Result returned by RHI::createDescriptorSets().
+	// The pool owns all allocated sets.
+	// sets is the flat list of all sets: configs[0] sets first, then configs[1], etc.
+	struct DescriptorSetCreateResult
+	{
+		vk::raii::DescriptorPool pool;
+		std::vector<vk::raii::DescriptorSet> sets;
+	};
+
 	class RHI
 	{
 	public:
@@ -75,6 +107,10 @@ namespace Gfx
 
 		Pipeline createGraphicsPipeline(const GraphicsPipelineCreateInfo& createInfo);
 		Pipeline createComputePipeline(const ComputePipelineCreateInfo& createInfo);
+
+		// Creates a descriptor pool, allocates sets for all configs, writes all descriptors, and
+		// returns the pool and the flat list of all sets (configs[0] sets first, configs[1] next, ...).
+		DescriptorSetCreateResult createDescriptorSets(const std::vector<DescriptorSetConfig>& configs);
 
 		template<typename T>
 		void updateBuffer(const Buffer& buffer, const T& data) {
@@ -120,4 +156,3 @@ namespace Gfx
 		vk::raii::CommandPool m_commandPool = nullptr;
 	};
 }
-

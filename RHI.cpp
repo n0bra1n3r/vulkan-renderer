@@ -1,6 +1,7 @@
 #include "RHI.hpp"
 
 #include <fstream>
+#include <unordered_map>
 #include <windows.h>
 
 #define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
@@ -452,7 +453,7 @@ void RHI::initDepthResources()
     }
 }
 
-void RHI::initCommandPool() 
+void RHI::initCommandPool()
 {
     vk::CommandPoolCreateInfo poolInfo{};
     poolInfo.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
@@ -462,7 +463,7 @@ void RHI::initCommandPool()
 }
 
 const vk::raii::ImageView& RHI::getDepthImageView(int index) const
-{ 
+{
     return m_depthImages[index].getImageView();
 }
 
@@ -536,13 +537,13 @@ Gfx::Image RHI::createImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryProp
     viewInfo.image = image;
     viewInfo.viewType = vk::ImageViewType::e2D;
     viewInfo.format = imageInfo.format;
-    viewInfo.subresourceRange.aspectMask = 
-        imageInfo.usage & vk::ImageUsageFlagBits::eDepthStencilAttachment 
+    viewInfo.subresourceRange.aspectMask =
+        imageInfo.usage & vk::ImageUsageFlagBits::eDepthStencilAttachment
         ? vk::ImageAspectFlagBits::eDepth
         : vk::ImageAspectFlagBits::eColor;
     viewInfo.subresourceRange.levelCount = 1;
     viewInfo.subresourceRange.layerCount = 1;
-    
+
     vk::raii::ImageView imageView(m_device, viewInfo);
 
     return Gfx::Image(std::move(image), std::move(imageMemory), std::move(imageView), imageInfo.extent, imageInfo.format);
@@ -648,8 +649,8 @@ Gfx::Pipeline RHI::createGraphicsPipeline(const Gfx::GraphicsPipelineCreateInfo&
         vk::DynamicState::eViewport,
         vk::DynamicState::eScissor
     };
-    vk::PipelineDynamicStateCreateInfo dynamicState{ 
-        {}, 
+    vk::PipelineDynamicStateCreateInfo dynamicState{
+        {},
         static_cast<uint32_t>(dynamicStates.size()),
         dynamicStates.data()
     };
@@ -728,4 +729,124 @@ Gfx::Pipeline RHI::createComputePipeline(const Gfx::ComputePipelineCreateInfo& c
     vk::raii::Pipeline pipeline(m_device, nullptr, pipelineInfo);
 
     return Gfx::Pipeline(std::move(pipeline), std::move(pipelineLayout), std::move(descriptorSetLayout));
+}
+
+Gfx::DescriptorSetCreateResult RHI::createDescriptorSets(const std::vector<Gfx::DescriptorSetConfig>& configs)
+{
+    // -------------------------------------------------------------------------
+    // 1. Tally up pool sizes by accumulating descriptor counts per type.
+    // -------------------------------------------------------------------------
+    std::unordered_map<vk::DescriptorType, uint32_t> typeCounts;
+    uint32_t totalSets = 0;
+
+    for (const auto& config : configs)
+    {
+        totalSets += config.setCount;
+
+        for (const auto& binding : config.bindings)
+        {
+            uint32_t count = 0;
+            if (std::holds_alternative<std::vector<vk::DescriptorBufferInfo>>(binding.data))
+            {
+                // One descriptor per set.
+                count = config.setCount;
+            }
+            else
+            {
+                // Image array: descriptorCount = number of images in the array * number of sets.
+                const auto& perFrameImages =
+                    std::get<std::vector<std::vector<vk::DescriptorImageInfo>>>(binding.data);
+                uint32_t imagesPerSet = static_cast<uint32_t>(perFrameImages[0].size());
+                count = config.setCount * imagesPerSet;
+            }
+            typeCounts[binding.type] += count;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 2. Build the pool size array and create the pool.
+    // -------------------------------------------------------------------------
+    std::vector<vk::DescriptorPoolSize> poolSizes;
+    poolSizes.reserve(typeCounts.size());
+    for (const auto& [type, count] : typeCounts)
+        poolSizes.push_back(vk::DescriptorPoolSize{ type, count });
+
+    vk::DescriptorPoolCreateInfo poolInfo{};
+    poolInfo.flags         = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
+    poolInfo.maxSets       = totalSets;
+    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+    poolInfo.pPoolSizes    = poolSizes.data();
+
+    vk::raii::DescriptorPool pool(m_device, poolInfo);
+
+    // -------------------------------------------------------------------------
+    // 3. Allocate descriptor sets for every config.
+    // -------------------------------------------------------------------------
+    std::vector<vk::raii::DescriptorSet> allSets;
+    allSets.reserve(totalSets);
+
+    for (const auto& config : configs)
+    {
+        std::vector<vk::DescriptorSetLayout> layouts(config.setCount, config.layout);
+
+        vk::DescriptorSetAllocateInfo allocInfo{};
+        allocInfo.descriptorPool     = *pool;
+        allocInfo.descriptorSetCount = config.setCount;
+        allocInfo.pSetLayouts        = layouts.data();
+
+        auto sets = m_device.allocateDescriptorSets(allocInfo);
+        for (auto& s : sets)
+            allSets.push_back(std::move(s));
+    }
+
+    // -------------------------------------------------------------------------
+    // 4. Write descriptors — iterate configs again, tracking set offset.
+    // -------------------------------------------------------------------------
+    uint32_t setOffset = 0;
+
+    for (const auto& config : configs)
+    {
+        for (uint32_t i = 0; i < config.setCount; ++i)
+        {
+            vk::DescriptorSet dstSet = *allSets[setOffset + i];
+
+            for (const auto& binding : config.bindings)
+            {
+                vk::WriteDescriptorSet write{};
+                write.dstSet          = dstSet;
+                write.dstBinding      = binding.binding;
+                write.dstArrayElement = 0;
+                write.descriptorType  = binding.type;
+
+                if (std::holds_alternative<std::vector<vk::DescriptorBufferInfo>>(binding.data))
+                {
+                    const auto& bufInfos =
+                        std::get<std::vector<vk::DescriptorBufferInfo>>(binding.data);
+                    // Use per-frame entry if available, otherwise fall back to index 0.
+                    const vk::DescriptorBufferInfo& bufInfo =
+                        (i < bufInfos.size()) ? bufInfos[i] : bufInfos[0];
+
+                    write.descriptorCount = 1;
+                    write.pBufferInfo     = &bufInfo;
+                }
+                else
+                {
+                    const auto& perFrameImages =
+                        std::get<std::vector<std::vector<vk::DescriptorImageInfo>>>(binding.data);
+                    // Use per-frame entry if available, otherwise fall back to index 0.
+                    const std::vector<vk::DescriptorImageInfo>& imgInfos =
+                        (i < perFrameImages.size()) ? perFrameImages[i] : perFrameImages[0];
+
+                    write.descriptorCount = static_cast<uint32_t>(imgInfos.size());
+                    write.pImageInfo      = imgInfos.data();
+                }
+
+                m_device.updateDescriptorSets(write, {});
+            }
+        }
+
+        setOffset += config.setCount;
+    }
+
+    return Gfx::DescriptorSetCreateResult{ std::move(pool), std::move(allSets) };
 }

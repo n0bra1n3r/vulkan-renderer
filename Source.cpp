@@ -154,9 +154,10 @@ private:
         createIndirectBuffer();
         createUniformBuffers();
         createStorageBuffer();
-		createDescriptorPool();
-		createComputeDescriptorSets();
-        createGraphicsDescriptorSets();
+        createDescriptorSets();
+		// createDescriptorPool();
+		// createComputeDescriptorSets();
+        // createGraphicsDescriptorSets();
 
         initRenderGraph();
     }
@@ -783,6 +784,118 @@ private:
             rhi.getDevice().updateDescriptorSets(imageWrite, {});
             rhi.getDevice().updateDescriptorSets(shadowImageWrite, {});
         }
+    }
+
+    void createDescriptorSets() {
+        auto maxFramesInFlight = rhi.getMaxFramesInFlight();
+
+        // ----- Compute config: particle pipeline -----
+        // Binding 0: per-frame UBO
+        std::vector<vk::DescriptorBufferInfo> computeUboInfos(maxFramesInFlight);
+        for (size_t i = 0; i < maxFramesInFlight; i++) {
+            computeUboInfos[i].buffer = uniformBuffers[i];
+            computeUboInfos[i].offset = 0;
+            computeUboInfos[i].range  = sizeof(UniformBufferObject);
+        }
+
+        // Binding 1: static SSBO (same buffer for all frames)
+        vk::DescriptorBufferInfo computeSsboInfo{};
+        computeSsboInfo.buffer = storageBuffer;
+        computeSsboInfo.offset = 0;
+        computeSsboInfo.range  = sizeof(instances[0]) * instances.size();
+
+        Gfx::DescriptorSetConfig computeConfig{};
+        computeConfig.layout   = *particlePipeline.getDescriptorSetLayout();
+        computeConfig.setCount = maxFramesInFlight;
+        computeConfig.bindings = {
+            Gfx::DescriptorBinding{
+                0,
+                vk::DescriptorType::eUniformBuffer,
+                std::vector<vk::DescriptorBufferInfo>(computeUboInfos)
+            },
+            Gfx::DescriptorBinding{
+                1,
+                vk::DescriptorType::eStorageBuffer,
+                std::vector<vk::DescriptorBufferInfo>{ computeSsboInfo }
+            },
+        };
+
+        // ----- Graphics config: main pipeline -----
+        // Binding 0: per-frame UBO
+        std::vector<vk::DescriptorBufferInfo> graphicsUboInfos(maxFramesInFlight);
+        for (size_t i = 0; i < maxFramesInFlight; i++) {
+            graphicsUboInfos[i].buffer = uniformBuffers[i];
+            graphicsUboInfos[i].offset = 0;
+            graphicsUboInfos[i].range  = sizeof(UniformBufferObject);
+        }
+
+        // Binding 1: static SSBO
+        vk::DescriptorBufferInfo graphicsSsboInfo{};
+        graphicsSsboInfo.buffer = storageBuffer;
+        graphicsSsboInfo.offset = 0;
+        graphicsSsboInfo.range  = sizeof(instances[0]) * instances.size();
+
+        // Binding 2: static texture array (same images for all frames)
+        std::vector<vk::DescriptorImageInfo> textureImageInfos;
+        textureImageInfos.reserve(textures.size());
+        for (size_t i = 0; i < textures.size(); i++) {
+            vk::DescriptorImageInfo imgInfo{};
+            imgInfo.sampler     = textureSampler;
+            imgInfo.imageView   = textureImages[i].getImageView();
+            imgInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+            textureImageInfos.push_back(imgInfo);
+        }
+
+        // Binding 3: per-frame shadow image (one single-element vector per frame)
+        std::vector<std::vector<vk::DescriptorImageInfo>> shadowImageInfos(maxFramesInFlight);
+        for (size_t i = 0; i < maxFramesInFlight; i++) {
+            vk::DescriptorImageInfo shadowInfo{};
+            shadowInfo.sampler     = shadowSampler;
+            shadowInfo.imageView   = shadowImages[i].getImageView();
+            shadowInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+            shadowImageInfos[i]    = { shadowInfo };
+        }
+
+        Gfx::DescriptorSetConfig graphicsConfig{};
+        graphicsConfig.layout   = mainPipeline.getDescriptorSetLayout();
+        graphicsConfig.setCount = maxFramesInFlight;
+        graphicsConfig.bindings = {
+            Gfx::DescriptorBinding{
+                0,
+                vk::DescriptorType::eUniformBuffer,
+                std::vector<vk::DescriptorBufferInfo>(graphicsUboInfos)
+            },
+            Gfx::DescriptorBinding{
+                1,
+                vk::DescriptorType::eStorageBuffer,
+                std::vector<vk::DescriptorBufferInfo>{ graphicsSsboInfo }
+            },
+            Gfx::DescriptorBinding{
+                2,
+                vk::DescriptorType::eCombinedImageSampler,
+                std::vector<std::vector<vk::DescriptorImageInfo>>{ textureImageInfos }
+            },
+            Gfx::DescriptorBinding{
+                3,
+                vk::DescriptorType::eCombinedImageSampler,
+                std::vector<std::vector<vk::DescriptorImageInfo>>(shadowImageInfos)
+            },
+        };
+
+        // ----- Allocate everything in one call -----
+        auto result = rhi.createDescriptorSets({ computeConfig, graphicsConfig });
+
+        descriptorPool = std::move(result.pool);
+
+        // Compute sets come first (setCount = maxFramesInFlight each)
+        computeDescriptorSets.reserve(maxFramesInFlight);
+        for (size_t i = 0; i < maxFramesInFlight; i++)
+            computeDescriptorSets.push_back(std::move(result.sets[i]));
+
+        // Graphics sets follow immediately after
+        graphicsDescriptorSets.reserve(maxFramesInFlight);
+        for (size_t i = 0; i < maxFramesInFlight; i++)
+            graphicsDescriptorSets.push_back(std::move(result.sets[maxFramesInFlight + i]));
     }
 
     void initRenderGraph()
