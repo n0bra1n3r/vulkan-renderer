@@ -1,6 +1,7 @@
 #include "RHI.hpp"
 
 #include <fstream>
+#include <memory>
 #include <unordered_map>
 #include <windows.h>
 
@@ -9,6 +10,7 @@
 #include <glm/glm.hpp>
 
 #include "Buffer.hpp"
+#include "DescriptorSet.hpp"
 #include "Image.hpp"
 #include "Pipeline.hpp"
 
@@ -731,12 +733,12 @@ Gfx::Pipeline RHI::createComputePipeline(const Gfx::ComputePipelineCreateInfo& c
     return Gfx::Pipeline(std::move(pipeline), std::move(pipelineLayout), std::move(descriptorSetLayout));
 }
 
-Gfx::DescriptorSetCreateResult RHI::createDescriptorSets(const std::vector<Gfx::DescriptorSetConfig>& configs)
+std::vector<std::vector<Gfx::DescriptorSet>> RHI::createDescriptorSets(const std::vector<Gfx::DescriptorSetConfig>& configs)
 {
     // -------------------------------------------------------------------------
     // 1. Tally up pool sizes by accumulating descriptor counts per type.
     // -------------------------------------------------------------------------
-    std::unordered_map<vk::DescriptorType, uint32_t> typeCounts;
+    std::unordered_map<vk::DescriptorType, uint32_t> typeCounts{};
     uint32_t totalSets = 0;
 
     for (const auto& config : configs)
@@ -766,10 +768,13 @@ Gfx::DescriptorSetCreateResult RHI::createDescriptorSets(const std::vector<Gfx::
     // -------------------------------------------------------------------------
     // 2. Build the pool size array and create the pool.
     // -------------------------------------------------------------------------
-    std::vector<vk::DescriptorPoolSize> poolSizes;
+    std::vector<vk::DescriptorPoolSize> poolSizes{};
     poolSizes.reserve(typeCounts.size());
+
     for (const auto& [type, count] : typeCounts)
+    {
         poolSizes.push_back(vk::DescriptorPoolSize{ type, count });
+    }
 
     vk::DescriptorPoolCreateInfo poolInfo{};
     poolInfo.flags         = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
@@ -777,13 +782,13 @@ Gfx::DescriptorSetCreateResult RHI::createDescriptorSets(const std::vector<Gfx::
     poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     poolInfo.pPoolSizes    = poolSizes.data();
 
-    vk::raii::DescriptorPool pool(m_device, poolInfo);
+    auto pool = std::make_shared<vk::raii::DescriptorPool>(m_device, poolInfo);
 
     // -------------------------------------------------------------------------
     // 3. Allocate descriptor sets for every config.
     // -------------------------------------------------------------------------
-    std::vector<vk::raii::DescriptorSet> allSets;
-    allSets.reserve(totalSets);
+    std::vector<std::vector<Gfx::DescriptorSet>> descriptorSetsArray{};
+    descriptorSetsArray.reserve(configs.size());
 
     for (const auto& config : configs)
     {
@@ -794,29 +799,38 @@ Gfx::DescriptorSetCreateResult RHI::createDescriptorSets(const std::vector<Gfx::
         allocInfo.descriptorSetCount = config.setCount;
         allocInfo.pSetLayouts        = layouts.data();
 
+        std::vector<Gfx::DescriptorSet> descriptorSets{};
+        descriptorSets.reserve(config.setCount);
+
         auto sets = m_device.allocateDescriptorSets(allocInfo);
-        for (auto& s : sets)
-            allSets.push_back(std::move(s));
+        for (auto& set : sets)
+        {
+            auto descriptorSet = DescriptorSet(pool, std::move(set));
+
+            descriptorSets.emplace_back(std::move(descriptorSet));
+        }
+
+        descriptorSetsArray.emplace_back(std::move(descriptorSets));
     }
 
     // -------------------------------------------------------------------------
     // 4. Write descriptors — iterate configs again, tracking set offset.
     // -------------------------------------------------------------------------
-    uint32_t setOffset = 0;
-
-    for (const auto& config : configs)
+    for (size_t j = 0; j < configs.size(); ++j)
     {
+        const auto& config = configs[j];
+
         for (uint32_t i = 0; i < config.setCount; ++i)
         {
-            vk::DescriptorSet dstSet = *allSets[setOffset + i];
+            vk::DescriptorSet dstSet = *descriptorSetsArray[j][i];
 
             for (const auto& binding : config.bindings)
             {
                 vk::WriteDescriptorSet write{};
-                write.dstSet          = dstSet;
-                write.dstBinding      = binding.binding;
+                write.dstSet = dstSet;
+                write.dstBinding = binding.binding;
                 write.dstArrayElement = 0;
-                write.descriptorType  = binding.type;
+                write.descriptorType = binding.type;
 
                 if (std::holds_alternative<std::vector<vk::DescriptorBufferInfo>>(binding.data))
                 {
@@ -827,7 +841,7 @@ Gfx::DescriptorSetCreateResult RHI::createDescriptorSets(const std::vector<Gfx::
                         (i < bufInfos.size()) ? bufInfos[i] : bufInfos[0];
 
                     write.descriptorCount = 1;
-                    write.pBufferInfo     = &bufInfo;
+                    write.pBufferInfo = &bufInfo;
                 }
                 else
                 {
@@ -838,15 +852,13 @@ Gfx::DescriptorSetCreateResult RHI::createDescriptorSets(const std::vector<Gfx::
                         (i < perFrameImages.size()) ? perFrameImages[i] : perFrameImages[0];
 
                     write.descriptorCount = static_cast<uint32_t>(imgInfos.size());
-                    write.pImageInfo      = imgInfos.data();
+                    write.pImageInfo = imgInfos.data();
                 }
 
                 m_device.updateDescriptorSets(write, {});
             }
         }
-
-        setOffset += config.setCount;
     }
 
-    return Gfx::DescriptorSetCreateResult{ std::move(pool), std::move(allSets) };
+    return descriptorSetsArray;
 }

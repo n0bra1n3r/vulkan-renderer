@@ -6,6 +6,7 @@
 namespace Gfx
 {
 	class Buffer;
+	class DescriptorSet;
 	class Image;
 	class Pipeline;
 
@@ -68,15 +69,6 @@ namespace Gfx
 		std::vector<DescriptorBinding> bindings;
 	};
 
-	// Result returned by RHI::createDescriptorSets().
-	// The pool owns all allocated sets.
-	// sets is the flat list of all sets: configs[0] sets first, then configs[1], etc.
-	struct DescriptorSetCreateResult
-	{
-		vk::raii::DescriptorPool pool;
-		std::vector<vk::raii::DescriptorSet> sets;
-	};
-
 	class RHI
 	{
 	public:
@@ -108,9 +100,7 @@ namespace Gfx
 		Pipeline createGraphicsPipeline(const GraphicsPipelineCreateInfo& createInfo);
 		Pipeline createComputePipeline(const ComputePipelineCreateInfo& createInfo);
 
-		// Creates a descriptor pool, allocates sets for all configs, writes all descriptors, and
-		// returns the pool and the flat list of all sets (configs[0] sets first, configs[1] next, ...).
-		DescriptorSetCreateResult createDescriptorSets(const std::vector<DescriptorSetConfig>& configs);
+		std::vector<std::vector<DescriptorSet>> createDescriptorSets(const std::vector<DescriptorSetConfig>& configs);
 
 		template<typename T>
 		void updateBuffer(const Buffer& buffer, const T& data) {

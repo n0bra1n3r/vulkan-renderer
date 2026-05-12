@@ -23,6 +23,7 @@
 #include <tiny_gltf.h>
 
 #include "Buffer.hpp"
+#include "DescriptorSet.hpp"
 #include "Image.hpp"
 #include "Pipeline.hpp"
 #include "RenderGraph.hpp"
@@ -123,9 +124,7 @@ private:
     Gfx::Buffer indirectBuffer = nullptr;
     Gfx::Buffer storageBuffer = nullptr;
     std::vector<Gfx::Buffer> uniformBuffers{};
-    vk::raii::DescriptorPool descriptorPool = nullptr;
-    std::vector<vk::raii::DescriptorSet> computeDescriptorSets{};
-    std::vector<vk::raii::DescriptorSet> graphicsDescriptorSets{};
+    std::vector<std::vector<Gfx::DescriptorSet>> descriptorSets{};
 
     void initWindow() {
         glfwInit();
@@ -644,148 +643,6 @@ private:
         rhi.updateBuffer(storageBuffer, instances);
     }
 
-    void createDescriptorPool() {
-        auto maxFramesInFlight = rhi.getMaxFramesInFlight();
-
-        std::array<vk::DescriptorPoolSize, 4> poolSizes = {
-            // *2 so graphics sets AND compute sets both fit
-            vk::DescriptorPoolSize{ vk::DescriptorType::eUniformBuffer, maxFramesInFlight * 2u },
-            vk::DescriptorPoolSize{ vk::DescriptorType::eStorageBuffer, maxFramesInFlight * 2u },
-            vk::DescriptorPoolSize{ vk::DescriptorType::eCombinedImageSampler, static_cast<uint32_t>(textures.size()) * maxFramesInFlight },
-            vk::DescriptorPoolSize{ vk::DescriptorType::eCombinedImageSampler, maxFramesInFlight },
-        };
-
-        vk::DescriptorPoolCreateInfo poolInfo{};
-        poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-        poolInfo.maxSets = maxFramesInFlight * 2u; // graphics + compute
-        poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
-        poolInfo.pPoolSizes = poolSizes.data();
-
-        descriptorPool = vk::raii::DescriptorPool(rhi.getDevice(), poolInfo);
-    }
-
-    void createComputeDescriptorSets() {
-        auto maxFramesInFlight = rhi.getMaxFramesInFlight();
-
-        std::vector<vk::DescriptorSetLayout> layouts(maxFramesInFlight,
-            *particlePipeline.getDescriptorSetLayout());
-
-        vk::DescriptorSetAllocateInfo allocInfo{};
-        allocInfo.descriptorPool = descriptorPool;
-        allocInfo.descriptorSetCount = static_cast<uint32_t>(layouts.size());
-        allocInfo.pSetLayouts = layouts.data();
-
-        computeDescriptorSets = rhi.getDevice().allocateDescriptorSets(allocInfo);
-
-        for (size_t i = 0; i < maxFramesInFlight; i++) {
-            vk::DescriptorBufferInfo uboInfo{};
-            uboInfo.buffer = uniformBuffers[i];
-            uboInfo.offset = 0;
-            uboInfo.range = sizeof(UniformBufferObject);
-
-            vk::DescriptorBufferInfo ssboInfo{};
-            ssboInfo.buffer = storageBuffer;
-            ssboInfo.offset = 0;
-            ssboInfo.range = sizeof(instances[0]) * instances.size();
-
-            vk::WriteDescriptorSet uboWrite{};
-            uboWrite.dstSet = computeDescriptorSets[i];
-            uboWrite.dstBinding = 0;
-            uboWrite.descriptorCount = 1;
-            uboWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
-            uboWrite.pBufferInfo = &uboInfo;
-
-            vk::WriteDescriptorSet ssboWrite{};
-            ssboWrite.dstSet = computeDescriptorSets[i];
-            ssboWrite.dstBinding = 1;
-            ssboWrite.descriptorCount = 1;
-            ssboWrite.descriptorType = vk::DescriptorType::eStorageBuffer;
-            ssboWrite.pBufferInfo = &ssboInfo;
-
-            rhi.getDevice().updateDescriptorSets(uboWrite, {});
-            rhi.getDevice().updateDescriptorSets(ssboWrite, {});
-        }
-    }
-
-    void createGraphicsDescriptorSets() {
-        // storage buffer descriptor info (same buffer for all sets)
-        vk::DescriptorBufferInfo storageBufferInfo{};
-        storageBufferInfo.buffer = storageBuffer;
-        storageBufferInfo.offset = 0;
-        storageBufferInfo.range = sizeof(instances[0]) * instances.size();
-
-        vk::DescriptorBufferInfo uboBufferInfo{};
-        uboBufferInfo.offset = 0;
-        uboBufferInfo.range = sizeof(UniformBufferObject);
-
-        std::vector<vk::DescriptorImageInfo> imageInfos{};
-        for (size_t i = 0; i < textures.size(); i++)
-        {
-            vk::DescriptorImageInfo imageInfo{};
-            imageInfo.sampler = textureSampler;
-            imageInfo.imageView = textureImages[i].getImageView();
-            imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-			imageInfos.emplace_back(std::move(imageInfo));
-        }
-
-        vk::WriteDescriptorSet uboWrite{};
-        uboWrite.dstBinding = 0;
-        uboWrite.dstArrayElement = 0;
-        uboWrite.descriptorCount = 1;
-        uboWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
-        uboWrite.pBufferInfo = &uboBufferInfo;
-
-        vk::WriteDescriptorSet ssboWrite{};
-        ssboWrite.dstBinding = 1;
-        ssboWrite.dstArrayElement = 0;
-        ssboWrite.descriptorCount = 1;
-        ssboWrite.descriptorType = vk::DescriptorType::eStorageBuffer;
-        ssboWrite.pBufferInfo = &storageBufferInfo;
-
-        vk::WriteDescriptorSet imageWrite{};
-        imageWrite.dstBinding = 2;
-        imageWrite.dstArrayElement = 0;
-        imageWrite.descriptorType = vk::DescriptorType::eCombinedImageSampler;
-        imageWrite.descriptorCount = imageInfos.size();
-        imageWrite.pImageInfo = imageInfos.data();
-
-        vk::DescriptorImageInfo shadowImageInfo{};
-        shadowImageInfo.sampler = shadowSampler;
-        shadowImageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-
-        vk::WriteDescriptorSet shadowImageWrite{};
-        shadowImageWrite.dstBinding = 3;
-        shadowImageWrite.dstArrayElement = 0;
-        shadowImageWrite.descriptorCount = 1;
-        shadowImageWrite.descriptorType = vk::DescriptorType::eCombinedImageSampler;
-
-        std::vector<vk::DescriptorSetLayout> layouts(rhi.getMaxFramesInFlight(), mainPipeline.getDescriptorSetLayout());
-
-        vk::DescriptorSetAllocateInfo allocInfo{};
-        allocInfo.descriptorPool = descriptorPool;
-        allocInfo.descriptorSetCount = static_cast<uint32_t>(layouts.size());
-        allocInfo.pSetLayouts = layouts.data();
-
-        graphicsDescriptorSets = rhi.getDevice().allocateDescriptorSets(allocInfo);
-
-        for (size_t i = 0; i < rhi.getMaxFramesInFlight(); i++) {
-            uboBufferInfo.buffer = uniformBuffers[i];
-            uboWrite.dstSet = graphicsDescriptorSets[i];
-            ssboWrite.dstSet = graphicsDescriptorSets[i];
-            imageWrite.dstSet = graphicsDescriptorSets[i];
-
-            shadowImageInfo.imageView = shadowImages[i].getImageView();
-
-            shadowImageWrite.dstSet = graphicsDescriptorSets[i];
-            shadowImageWrite.pImageInfo = &shadowImageInfo;
-
-            rhi.getDevice().updateDescriptorSets(uboWrite, {});
-            rhi.getDevice().updateDescriptorSets(ssboWrite, {});
-            rhi.getDevice().updateDescriptorSets(imageWrite, {});
-            rhi.getDevice().updateDescriptorSets(shadowImageWrite, {});
-        }
-    }
-
     void createDescriptorSets() {
         auto maxFramesInFlight = rhi.getMaxFramesInFlight();
 
@@ -883,19 +740,7 @@ private:
         };
 
         // ----- Allocate everything in one call -----
-        auto result = rhi.createDescriptorSets({ computeConfig, graphicsConfig });
-
-        descriptorPool = std::move(result.pool);
-
-        // Compute sets come first (setCount = maxFramesInFlight each)
-        computeDescriptorSets.reserve(maxFramesInFlight);
-        for (size_t i = 0; i < maxFramesInFlight; i++)
-            computeDescriptorSets.push_back(std::move(result.sets[i]));
-
-        // Graphics sets follow immediately after
-        graphicsDescriptorSets.reserve(maxFramesInFlight);
-        for (size_t i = 0; i < maxFramesInFlight; i++)
-            graphicsDescriptorSets.push_back(std::move(result.sets[maxFramesInFlight + i]));
+        descriptorSets = rhi.createDescriptorSets({ computeConfig, graphicsConfig });
     }
 
     void initRenderGraph()
@@ -919,7 +764,7 @@ private:
                 vk::PipelineBindPoint::eCompute,
                 particlePipeline.getPipelineLayout(),
                 0,
-                *computeDescriptorSets[imageIndex],
+                *descriptorSets[0][imageIndex],
                 nullptr);
 
             // shader uses [numthreads(64,1,1)], so ceil(instanceCount / 64) groups in X
@@ -973,7 +818,7 @@ private:
             cmd.beginRendering(renderingInfo);
 
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, shadowPipeline);
-            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, shadowPipeline.getPipelineLayout(), 0, *graphicsDescriptorSets[imageIndex], nullptr);
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, shadowPipeline.getPipelineLayout(), 0, *descriptorSets[1][imageIndex], nullptr);
             cmd.drawIndexedIndirect(*indirectBuffer, static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand)), drawCmds.size() - 1, static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand)));
 
             cmd.endRendering();
@@ -1043,7 +888,7 @@ private:
             cmd.beginRendering(renderingInfo);
 
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, mainPipeline);
-            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, mainPipeline.getPipelineLayout(), 0, *graphicsDescriptorSets[imageIndex], nullptr);
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, mainPipeline.getPipelineLayout(), 0, *descriptorSets[1][imageIndex], nullptr);
             cmd.drawIndexedIndirect(*indirectBuffer, 0, drawCmds.size(), static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand)));
 
             cmd.endRendering();
