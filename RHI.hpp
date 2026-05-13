@@ -47,25 +47,18 @@ namespace Gfx
 		std::vector<vk::DescriptorSetLayoutBinding> descriptorSetLayoutBindings;
 	};
 
-	// Describes a single descriptor binding within a DescriptorSetConfig.
-	// data holds either:
-	//   - vector<DescriptorBufferInfo>: one entry per frame, or a single entry reused for all frames
-	//   - vector<vector<DescriptorImageInfo>>: one inner vector per frame, or a single entry reused for all frames
 	struct DescriptorBinding
 	{
-		uint32_t binding;
 		vk::DescriptorType type;
 		std::variant<
-			std::vector<vk::DescriptorBufferInfo>,             // buffer data, indexed by frame
-			std::vector<std::vector<vk::DescriptorImageInfo>>  // image data, indexed by frame
+			std::vector<vk::DescriptorBufferInfo>,
+			std::vector<std::vector<vk::DescriptorImageInfo>>
 		> data;
 	};
 
-	// Describes all descriptor sets to allocate for one pipeline stage.
 	struct DescriptorSetConfig
 	{
-		vk::DescriptorSetLayout layout; // the layout to allocate against
-		uint32_t setCount;              // number of sets to allocate (typically maxFramesInFlight)
+		vk::DescriptorSetLayout layout;
 		std::vector<DescriptorBinding> bindings;
 	};
 
@@ -101,6 +94,15 @@ namespace Gfx
 		Pipeline createComputePipeline(const ComputePipelineCreateInfo& createInfo);
 
 		std::vector<std::vector<DescriptorSet>> createDescriptorSets(const std::vector<DescriptorSetConfig>& configs);
+
+		template<int S>
+		std::array<std::vector<DescriptorSet>, S> createDescriptorSets(const std::array<DescriptorSetConfig, S>& configs)
+		{
+			auto sets = createDescriptorSets(std::vector<DescriptorSetConfig>(configs.begin(), configs.end()));
+			std::array<std::vector<DescriptorSet>, S> result{};
+			std::move(sets.begin(), sets.end(), result.begin());
+			return result;
+		}
 
 		template<typename T>
 		void updateBuffer(const Buffer& buffer, const T& data) {

@@ -124,7 +124,8 @@ private:
     Gfx::Buffer indirectBuffer = nullptr;
     Gfx::Buffer storageBuffer = nullptr;
     std::vector<Gfx::Buffer> uniformBuffers{};
-    std::vector<std::vector<Gfx::DescriptorSet>> descriptorSets{};
+    std::vector<Gfx::DescriptorSet> computeDescriptorSets{};
+    std::vector<Gfx::DescriptorSet> graphicsDescriptorSets{};
 
     void initWindow() {
         glfwInit();
@@ -154,9 +155,6 @@ private:
         createUniformBuffers();
         createStorageBuffer();
         createDescriptorSets();
-		// createDescriptorPool();
-		// createComputeDescriptorSets();
-        // createGraphicsDescriptorSets();
 
         initRenderGraph();
     }
@@ -658,10 +656,9 @@ private:
 
         Gfx::DescriptorSetConfig computeConfig{};
         computeConfig.layout   = particlePipeline.getDescriptorSetLayout();
-        computeConfig.setCount = maxFramesInFlight;
         computeConfig.bindings = {
-            { 0, vk::DescriptorType::eUniformBuffer, std::vector<vk::DescriptorBufferInfo>(uboInfos) },
-            { 1, vk::DescriptorType::eStorageBuffer, std::vector<vk::DescriptorBufferInfo>{ ssboInfo } },
+            { vk::DescriptorType::eUniformBuffer, std::vector<vk::DescriptorBufferInfo>(uboInfos) },
+            { vk::DescriptorType::eStorageBuffer, std::vector<vk::DescriptorBufferInfo>{ ssboInfo } },
         };
 
         std::vector<vk::DescriptorImageInfo> textureImageInfos;
@@ -685,15 +682,16 @@ private:
 
         Gfx::DescriptorSetConfig graphicsConfig{};
         graphicsConfig.layout   = mainPipeline.getDescriptorSetLayout();
-        graphicsConfig.setCount = maxFramesInFlight;
         graphicsConfig.bindings = {
             computeConfig.bindings[0],
             computeConfig.bindings[1],
-            { 2, vk::DescriptorType::eCombinedImageSampler, std::vector<std::vector<vk::DescriptorImageInfo>>{ textureImageInfos } },
-            { 3, vk::DescriptorType::eCombinedImageSampler, std::vector<std::vector<vk::DescriptorImageInfo>>(shadowImageInfos) },
+            { vk::DescriptorType::eCombinedImageSampler, std::vector<std::vector<vk::DescriptorImageInfo>>{ textureImageInfos } },
+            { vk::DescriptorType::eCombinedImageSampler, std::vector<std::vector<vk::DescriptorImageInfo>>(shadowImageInfos) },
         };
 
-        descriptorSets = rhi.createDescriptorSets({ computeConfig, graphicsConfig });
+        auto [computeSets, graphicsSets] = rhi.createDescriptorSets(std::array{ computeConfig, graphicsConfig });
+        computeDescriptorSets = std::move(computeSets);
+        graphicsDescriptorSets = std::move(graphicsSets);
     }
 
     void initRenderGraph()
@@ -717,7 +715,7 @@ private:
                 vk::PipelineBindPoint::eCompute,
                 particlePipeline.getPipelineLayout(),
                 0,
-                *descriptorSets[0][imageIndex],
+                *computeDescriptorSets[imageIndex],
                 nullptr);
 
             // shader uses [numthreads(64,1,1)], so ceil(instanceCount / 64) groups in X
@@ -771,7 +769,7 @@ private:
             cmd.beginRendering(renderingInfo);
 
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, shadowPipeline);
-            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, shadowPipeline.getPipelineLayout(), 0, *descriptorSets[1][imageIndex], nullptr);
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, shadowPipeline.getPipelineLayout(), 0, *graphicsDescriptorSets[imageIndex], nullptr);
             cmd.drawIndexedIndirect(*indirectBuffer, static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand)), drawCmds.size() - 1, static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand)));
 
             cmd.endRendering();
@@ -841,7 +839,7 @@ private:
             cmd.beginRendering(renderingInfo);
 
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, mainPipeline);
-            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, mainPipeline.getPipelineLayout(), 0, *descriptorSets[1][imageIndex], nullptr);
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, mainPipeline.getPipelineLayout(), 0, *graphicsDescriptorSets[imageIndex], nullptr);
             cmd.drawIndexedIndirect(*indirectBuffer, 0, drawCmds.size(), static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand)));
 
             cmd.endRendering();

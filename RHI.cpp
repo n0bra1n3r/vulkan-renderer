@@ -735,39 +735,24 @@ Gfx::Pipeline RHI::createComputePipeline(const Gfx::ComputePipelineCreateInfo& c
 
 std::vector<std::vector<Gfx::DescriptorSet>> RHI::createDescriptorSets(const std::vector<Gfx::DescriptorSetConfig>& configs)
 {
-    // -------------------------------------------------------------------------
-    // 1. Tally up pool sizes by accumulating descriptor counts per type.
-    // -------------------------------------------------------------------------
     std::unordered_map<vk::DescriptorType, uint32_t> typeCounts{};
-    uint32_t totalSets = 0;
 
     for (const auto& config : configs)
     {
-        totalSets += config.setCount;
-
         for (const auto& binding : config.bindings)
         {
-            uint32_t count = 0;
-            if (std::holds_alternative<std::vector<vk::DescriptorBufferInfo>>(binding.data))
+            uint32_t count = m_maxFramesInFlight;
+            if (!std::holds_alternative<std::vector<vk::DescriptorBufferInfo>>(binding.data))
             {
-                // One descriptor per set.
-                count = config.setCount;
-            }
-            else
-            {
-                // Image array: descriptorCount = number of images in the array * number of sets.
                 const auto& perFrameImages =
                     std::get<std::vector<std::vector<vk::DescriptorImageInfo>>>(binding.data);
-                uint32_t imagesPerSet = static_cast<uint32_t>(perFrameImages[0].size());
-                count = config.setCount * imagesPerSet;
+                auto imagesPerSet = static_cast<uint32_t>(perFrameImages[0].size());
+                count *= imagesPerSet;
             }
             typeCounts[binding.type] += count;
         }
     }
 
-    // -------------------------------------------------------------------------
-    // 2. Build the pool size array and create the pool.
-    // -------------------------------------------------------------------------
     std::vector<vk::DescriptorPoolSize> poolSizes{};
     poolSizes.reserve(typeCounts.size());
 
@@ -778,29 +763,26 @@ std::vector<std::vector<Gfx::DescriptorSet>> RHI::createDescriptorSets(const std
 
     vk::DescriptorPoolCreateInfo poolInfo{};
     poolInfo.flags         = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-    poolInfo.maxSets       = totalSets;
+    poolInfo.maxSets       = static_cast<uint32_t>(configs.size() * m_maxFramesInFlight);
     poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     poolInfo.pPoolSizes    = poolSizes.data();
 
     auto pool = std::make_shared<vk::raii::DescriptorPool>(m_device, poolInfo);
 
-    // -------------------------------------------------------------------------
-    // 3. Allocate descriptor sets for every config.
-    // -------------------------------------------------------------------------
     std::vector<std::vector<Gfx::DescriptorSet>> descriptorSetsArray{};
     descriptorSetsArray.reserve(configs.size());
 
     for (const auto& config : configs)
     {
-        std::vector<vk::DescriptorSetLayout> layouts(config.setCount, config.layout);
+        std::vector<vk::DescriptorSetLayout> layouts(m_maxFramesInFlight, config.layout);
 
         vk::DescriptorSetAllocateInfo allocInfo{};
         allocInfo.descriptorPool     = *pool;
-        allocInfo.descriptorSetCount = config.setCount;
+        allocInfo.descriptorSetCount = m_maxFramesInFlight;
         allocInfo.pSetLayouts        = layouts.data();
 
         std::vector<Gfx::DescriptorSet> descriptorSets{};
-        descriptorSets.reserve(config.setCount);
+        descriptorSets.reserve(m_maxFramesInFlight);
 
         auto sets = m_device.allocateDescriptorSets(allocInfo);
         for (auto& set : sets)
@@ -813,22 +795,21 @@ std::vector<std::vector<Gfx::DescriptorSet>> RHI::createDescriptorSets(const std
         descriptorSetsArray.emplace_back(std::move(descriptorSets));
     }
 
-    // -------------------------------------------------------------------------
-    // 4. Write descriptors — iterate configs again, tracking set offset.
-    // -------------------------------------------------------------------------
     for (size_t j = 0; j < configs.size(); ++j)
     {
         const auto& config = configs[j];
 
-        for (uint32_t i = 0; i < config.setCount; ++i)
+        for (uint32_t i = 0; i < m_maxFramesInFlight; ++i)
         {
             vk::DescriptorSet dstSet = *descriptorSetsArray[j][i];
 
-            for (const auto& binding : config.bindings)
+            for (size_t h = 0; h < config.bindings.size(); ++h)
             {
+                const auto& binding = config.bindings[h];
+
                 vk::WriteDescriptorSet write{};
                 write.dstSet = dstSet;
-                write.dstBinding = binding.binding;
+                write.dstBinding = static_cast<uint32_t>(h);
                 write.dstArrayElement = 0;
                 write.descriptorType = binding.type;
 
@@ -836,6 +817,7 @@ std::vector<std::vector<Gfx::DescriptorSet>> RHI::createDescriptorSets(const std
                 {
                     const auto& bufInfos =
                         std::get<std::vector<vk::DescriptorBufferInfo>>(binding.data);
+                    if (bufInfos.empty()) continue;
                     // Use per-frame entry if available, otherwise fall back to index 0.
                     const vk::DescriptorBufferInfo& bufInfo =
                         (i < bufInfos.size()) ? bufInfos[i] : bufInfos[0];
@@ -847,6 +829,7 @@ std::vector<std::vector<Gfx::DescriptorSet>> RHI::createDescriptorSets(const std
                 {
                     const auto& perFrameImages =
                         std::get<std::vector<std::vector<vk::DescriptorImageInfo>>>(binding.data);
+                    if (perFrameImages.empty()) continue;
                     // Use per-frame entry if available, otherwise fall back to index 0.
                     const std::vector<vk::DescriptorImageInfo>& imgInfos =
                         (i < perFrameImages.size()) ? perFrameImages[i] : perFrameImages[0];
