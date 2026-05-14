@@ -661,14 +661,14 @@ private:
             { vk::DescriptorType::eStorageBuffer, std::vector<vk::DescriptorBufferInfo>{ ssboInfo } },
         };
 
-        std::vector<vk::DescriptorImageInfo> textureImageInfos;
+        std::vector<vk::DescriptorImageInfo> textureImageInfos{};
         textureImageInfos.reserve(textures.size());
         for (size_t i = 0; i < textures.size(); i++) {
-            vk::DescriptorImageInfo imgInfo{};
-            imgInfo.sampler     = textureSampler;
-            imgInfo.imageView   = textureImages[i].getImageView();
-            imgInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-            textureImageInfos.push_back(imgInfo);
+            vk::DescriptorImageInfo textureInfo{};
+            textureInfo.sampler     = textureSampler;
+            textureInfo.imageView   = textureImages[i].getImageView();
+            textureInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+            textureImageInfos.emplace_back(std::move(textureInfo));
         }
 
         std::vector<std::vector<vk::DescriptorImageInfo>> shadowImageInfos(maxFramesInFlight);
