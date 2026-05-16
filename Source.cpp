@@ -115,10 +115,14 @@ private:
     Gfx::Pipeline particlePipeline = nullptr;
 	Gfx::Pipeline mainPipeline = nullptr;
     Gfx::Pipeline shadowPipeline = nullptr;
+    Gfx::Pipeline postprocPipeline = nullptr;
     std::vector<Gfx::Image> textureImages{};
     vk::raii::Sampler textureSampler = nullptr;
     std::vector<Gfx::Image> shadowImages{};
     vk::raii::Sampler shadowSampler = nullptr;
+    std::vector<Gfx::Image> postprocImages{};
+    vk::raii::Sampler postprocSampler = nullptr;
+    std::vector<Gfx::DescriptorSet> postprocDescriptorSets{};
     Gfx::Buffer vertexBuffer = nullptr;
     Gfx::Buffer indexBuffer = nullptr;
     Gfx::Buffer indirectBuffer = nullptr;
@@ -146,9 +150,11 @@ private:
 		createParticlePipeline();
 		createGraphicsPipeline();
         createShadowPipeline();
+        createPostprocPipeline();
         // create and initialize the render graph (allocates per-image command-buffers and sync)
 		createTextureResources();
 		createShadowResources();
+		createPostprocResources();
         createVertexBuffer();
         createIndexBuffer();
         createIndirectBuffer();
@@ -213,6 +219,21 @@ private:
         pipelineCreateInfo.depthAttachment = { rhi.getDepthFormat() };
 
         shadowPipeline = rhi.createGraphicsPipeline(pipelineCreateInfo);
+    }
+
+    void createPostprocPipeline() {
+        Gfx::GraphicsPipelineCreateInfo pipelineCreateInfo{};
+        pipelineCreateInfo.shaders = {
+            { "Shaders/postproc.vert.spv", vk::ShaderStageFlagBits::eVertex },
+            { "Shaders/postproc.frag.spv", vk::ShaderStageFlagBits::eFragment },
+        };
+        pipelineCreateInfo.descriptorSetLayoutBindings = {
+            { 0, vk::DescriptorType::eUniformBuffer,        1, vk::ShaderStageFlagBits::eFragment, nullptr },
+            { 1, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr },
+        };
+        pipelineCreateInfo.colorAttachments = { { rhi.getSurfaceFormat() } };
+
+        postprocPipeline = rhi.createGraphicsPipeline(pipelineCreateInfo);
     }
 
     std::vector<Vertex> generateSphere(uint32_t latSegments = 8, uint32_t lonSegments = 8)
@@ -589,6 +610,33 @@ private:
         shadowSampler = vk::raii::Sampler(rhi.getDevice(), samplerInfo);
     }
 
+    void createPostprocResources() {
+        postprocImages.reserve(rhi.getMaxFramesInFlight());
+
+        auto extent = rhi.getSwapChainExtent();
+
+        vk::ImageCreateInfo imageInfo{};
+        imageInfo.imageType     = vk::ImageType::e2D;
+        imageInfo.format        = rhi.getSurfaceFormat();
+        imageInfo.extent.width  = extent.width;
+        imageInfo.extent.height = extent.height;
+        imageInfo.extent.depth  = 1;
+        imageInfo.mipLevels     = 1;
+        imageInfo.arrayLayers   = 1;
+        imageInfo.usage         = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled;
+
+        for (size_t i = 0; i < rhi.getMaxFramesInFlight(); ++i) {
+            postprocImages.emplace_back(rhi.createImage(imageInfo));
+        }
+
+        vk::SamplerCreateInfo samplerInfo{};
+        samplerInfo.magFilter  = vk::Filter::eLinear;
+        samplerInfo.minFilter  = vk::Filter::eLinear;
+        samplerInfo.mipmapMode = vk::SamplerMipmapMode::eLinear;
+
+        postprocSampler = vk::raii::Sampler(rhi.getDevice(), samplerInfo);
+    }
+
     void createVertexBuffer() {
         vk::BufferCreateInfo bufferInfo{};
         bufferInfo.size = sizeof(vertices[0]) * vertices.size();
@@ -689,9 +737,26 @@ private:
             { vk::DescriptorType::eCombinedImageSampler, std::vector<std::vector<vk::DescriptorImageInfo>>(shadowImageInfos) },
         };
 
-        auto [computeSets, graphicsSets] = rhi.createDescriptorSets(std::array{ computeConfig, graphicsConfig });
-        computeDescriptorSets = std::move(computeSets);
+        std::vector<std::vector<vk::DescriptorImageInfo>> colorImageInfos(maxFramesInFlight);
+        for (size_t i = 0; i < maxFramesInFlight; i++) {
+            vk::DescriptorImageInfo colorInfo{};
+            colorInfo.sampler     = postprocSampler;
+            colorInfo.imageView   = postprocImages[i].getImageView();
+            colorInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+            colorImageInfos[i]    = { colorInfo };
+        }
+
+        Gfx::DescriptorSetConfig postprocConfig{};
+        postprocConfig.layout   = postprocPipeline.getDescriptorSetLayout();
+        postprocConfig.bindings = {
+            computeConfig.bindings[0],
+            { vk::DescriptorType::eCombinedImageSampler, std::vector<std::vector<vk::DescriptorImageInfo>>(colorImageInfos) },
+        };
+
+        auto [computeSets, graphicsSets, postprocSets] = rhi.createDescriptorSets(std::array{ computeConfig, graphicsConfig, postprocConfig });
+        computeDescriptorSets  = std::move(computeSets);
         graphicsDescriptorSets = std::move(graphicsSets);
+        postprocDescriptorSets = std::move(postprocSets);
     }
 
     void initRenderGraph()
@@ -777,35 +842,41 @@ private:
 
         graph.addPass(shadowPass);
 
-		// Main pass: render scene from camera, sampling shadow map
+        // Main pass: render scene from camera into intermediate color image, sampling shadow map
         Gfx::RenderPassNode mainPass{ "MainPass" };
 
-		// Transition shadow image from depth attachment -> shader read for sampling in main pass
-        shadowTransition.oldLayout = vk::ImageLayout::eDepthAttachmentOptimal;
-        shadowTransition.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        // Transition shadow image: depth attachment -> shader read
+        shadowTransition.oldLayout     = vk::ImageLayout::eDepthAttachmentOptimal;
+        shadowTransition.newLayout     = vk::ImageLayout::eShaderReadOnlyOptimal;
         shadowTransition.srcAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
         shadowTransition.dstAccessMask = vk::AccessFlagBits2::eShaderRead;
-        shadowTransition.srcStageMask = vk::PipelineStageFlagBits2::eLateFragmentTests;
-        shadowTransition.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+        shadowTransition.srcStageMask  = vk::PipelineStageFlagBits2::eLateFragmentTests;
+        shadowTransition.dstStageMask  = vk::PipelineStageFlagBits2::eFragmentShader;
         mainPass.attachmentInfos.emplace_back(std::move(shadowTransition));
 
-        Gfx::RenderPassNode::AttachmentTransitionInfo mainColorTransition{ rhi.getSwapChain().getImages(), vk::ImageAspectFlagBits::eColor };
-        mainColorTransition.oldLayout = vk::ImageLayout::eUndefined;
-        mainColorTransition.newLayout = vk::ImageLayout::eColorAttachmentOptimal;
+        // Transition intermediate color image: undefined -> color attachment
+        std::vector<vk::Image> colorImageHandles(postprocImages.size());
+        for (size_t i = 0; i < postprocImages.size(); ++i) {
+            colorImageHandles[i] = *postprocImages[i];
+        }
+
+        Gfx::RenderPassNode::AttachmentTransitionInfo mainColorTransition{ colorImageHandles, vk::ImageAspectFlagBits::eColor };
+        mainColorTransition.oldLayout     = vk::ImageLayout::eUndefined;
+        mainColorTransition.newLayout     = vk::ImageLayout::eColorAttachmentOptimal;
         mainColorTransition.srcAccessMask = vk::AccessFlagBits2::eNone;
         mainColorTransition.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
-        mainColorTransition.srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe;
-        mainColorTransition.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
-        mainPass.attachmentInfos.emplace_back(mainColorTransition);
+        mainColorTransition.srcStageMask  = vk::PipelineStageFlagBits2::eTopOfPipe;
+        mainColorTransition.dstStageMask  = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+        mainPass.attachmentInfos.emplace_back(mainColorTransition); // keep copy — reused below
 
         Gfx::RenderPassNode::AttachmentTransitionInfo mainDepthTransition{ rhi.getDepthImages(), vk::ImageAspectFlagBits::eDepth };
-        mainDepthTransition.oldLayout = vk::ImageLayout::eUndefined;
-        mainDepthTransition.newLayout = vk::ImageLayout::eDepthAttachmentOptimal;
+        mainDepthTransition.oldLayout     = vk::ImageLayout::eUndefined;
+        mainDepthTransition.newLayout     = vk::ImageLayout::eDepthAttachmentOptimal;
         mainDepthTransition.srcAccessMask = vk::AccessFlagBits2::eNone;
         mainDepthTransition.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
-        mainDepthTransition.srcStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests;
-        mainDepthTransition.dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests;
-		mainPass.attachmentInfos.emplace_back(std::move(mainDepthTransition));
+        mainDepthTransition.srcStageMask  = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests;
+        mainDepthTransition.dstStageMask  = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests;
+        mainPass.attachmentInfos.emplace_back(std::move(mainDepthTransition));
 
         mainPass.recordFunc = [this](vk::raii::CommandBuffer& cmd, uint32_t imageIndex)
         {
@@ -813,28 +884,26 @@ private:
 
             vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
             vk::RenderingAttachmentInfo colorAttachmentInfo{};
-            colorAttachmentInfo.imageView = rhi.getSwapChainImageView(imageIndex);
+            colorAttachmentInfo.imageView   = postprocImages[imageIndex].getImageView();
             colorAttachmentInfo.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
-            colorAttachmentInfo.loadOp = vk::AttachmentLoadOp::eClear;
-            colorAttachmentInfo.storeOp = vk::AttachmentStoreOp::eStore;
-            colorAttachmentInfo.clearValue = clearColor;
+            colorAttachmentInfo.loadOp      = vk::AttachmentLoadOp::eClear;
+            colorAttachmentInfo.storeOp     = vk::AttachmentStoreOp::eStore;
+            colorAttachmentInfo.clearValue  = clearColor;
 
             vk::ClearValue clearDepth = vk::ClearDepthStencilValue(1, 0);
             vk::RenderingAttachmentInfo depthAttachmentInfo{};
-            depthAttachmentInfo.imageView = rhi.getDepthImageView(imageIndex);
+            depthAttachmentInfo.imageView   = rhi.getDepthImageView(imageIndex);
             depthAttachmentInfo.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
-            depthAttachmentInfo.loadOp = vk::AttachmentLoadOp::eClear;
-            depthAttachmentInfo.storeOp = vk::AttachmentStoreOp::eDontCare;
-            depthAttachmentInfo.clearValue = clearDepth;
+            depthAttachmentInfo.loadOp      = vk::AttachmentLoadOp::eClear;
+            depthAttachmentInfo.storeOp     = vk::AttachmentStoreOp::eDontCare;
+            depthAttachmentInfo.clearValue  = clearDepth;
 
             vk::RenderingInfo renderingInfo{};
-            renderingInfo.renderArea.offset.x = 0;
-            renderingInfo.renderArea.offset.y = 0;
-            renderingInfo.renderArea.extent = swapChainExtent;
-            renderingInfo.layerCount = 1;
+            renderingInfo.renderArea.extent    = swapChainExtent;
+            renderingInfo.layerCount           = 1;
             renderingInfo.colorAttachmentCount = 1;
-            renderingInfo.pColorAttachments = &colorAttachmentInfo;
-            renderingInfo.pDepthAttachment = &depthAttachmentInfo;
+            renderingInfo.pColorAttachments    = &colorAttachmentInfo;
+            renderingInfo.pDepthAttachment     = &depthAttachmentInfo;
 
             cmd.beginRendering(renderingInfo);
 
@@ -847,15 +916,66 @@ private:
 
         graph.addPass(mainPass);
 
-		// Present transition pass: transition main color image from color attachment -> present for presentation to swap chain
-        Gfx::RenderPassNode presentTransition{ "PresentTransition" };
-        mainColorTransition.oldLayout = vk::ImageLayout::eColorAttachmentOptimal;
-        mainColorTransition.newLayout = vk::ImageLayout::ePresentSrcKHR;
+        // Post-processing pass: sample intermediate color image, apply rain/water distortion, write to swap chain
+        Gfx::RenderPassNode postprocPass{ "PostprocPass" };
+
+        // Transition intermediate color image: color attachment -> shader read
+        mainColorTransition.oldLayout     = vk::ImageLayout::eColorAttachmentOptimal;
+        mainColorTransition.newLayout     = vk::ImageLayout::eShaderReadOnlyOptimal;
         mainColorTransition.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
-        mainColorTransition.dstAccessMask = vk::AccessFlagBits2::eNone;
-        mainColorTransition.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
-        mainColorTransition.dstStageMask = vk::PipelineStageFlagBits2::eBottomOfPipe;
-		presentTransition.attachmentInfos.emplace_back(std::move(mainColorTransition));
+        mainColorTransition.dstAccessMask = vk::AccessFlagBits2::eShaderRead;
+        mainColorTransition.srcStageMask  = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+        mainColorTransition.dstStageMask  = vk::PipelineStageFlagBits2::eFragmentShader;
+        postprocPass.attachmentInfos.emplace_back(std::move(mainColorTransition));
+
+        // Transition swap chain image: undefined -> color attachment
+        Gfx::RenderPassNode::AttachmentTransitionInfo swapchainTransition{ rhi.getSwapChain().getImages(), vk::ImageAspectFlagBits::eColor };
+        swapchainTransition.oldLayout     = vk::ImageLayout::eUndefined;
+        swapchainTransition.newLayout     = vk::ImageLayout::eColorAttachmentOptimal;
+        swapchainTransition.srcAccessMask = vk::AccessFlagBits2::eNone;
+        swapchainTransition.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
+        swapchainTransition.srcStageMask  = vk::PipelineStageFlagBits2::eTopOfPipe;
+        swapchainTransition.dstStageMask  = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+        postprocPass.attachmentInfos.emplace_back(swapchainTransition); // keep copy — reused in present transition
+
+        postprocPass.recordFunc = [this](vk::raii::CommandBuffer& cmd, uint32_t imageIndex)
+        {
+            auto swapChainExtent = rhi.getSwapChainExtent();
+
+            vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
+            vk::RenderingAttachmentInfo colorAttachmentInfo{};
+            colorAttachmentInfo.imageView   = rhi.getSwapChainImageView(imageIndex);
+            colorAttachmentInfo.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
+            colorAttachmentInfo.loadOp      = vk::AttachmentLoadOp::eClear;
+            colorAttachmentInfo.storeOp     = vk::AttachmentStoreOp::eStore;
+            colorAttachmentInfo.clearValue  = clearColor;
+
+            vk::RenderingInfo renderingInfo{};
+            renderingInfo.renderArea.extent    = swapChainExtent;
+            renderingInfo.layerCount           = 1;
+            renderingInfo.colorAttachmentCount = 1;
+            renderingInfo.pColorAttachments    = &colorAttachmentInfo;
+
+            cmd.beginRendering(renderingInfo);
+
+            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, postprocPipeline);
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, postprocPipeline.getPipelineLayout(), 0, *postprocDescriptorSets[imageIndex], nullptr);
+            cmd.draw(3, 1, 0, 0); // fullscreen triangle — no vertex buffer needed
+
+            cmd.endRendering();
+        };
+
+        graph.addPass(postprocPass);
+
+        // Present transition: swap chain color attachment -> presentable
+        Gfx::RenderPassNode presentTransition{ "PresentTransition" };
+        swapchainTransition.oldLayout     = vk::ImageLayout::eColorAttachmentOptimal;
+        swapchainTransition.newLayout     = vk::ImageLayout::ePresentSrcKHR;
+        swapchainTransition.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
+        swapchainTransition.dstAccessMask = vk::AccessFlagBits2::eNone;
+        swapchainTransition.srcStageMask  = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+        swapchainTransition.dstStageMask  = vk::PipelineStageFlagBits2::eBottomOfPipe;
+        presentTransition.attachmentInfos.emplace_back(std::move(swapchainTransition));
 
         graph.addPass(presentTransition);
 
