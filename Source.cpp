@@ -122,6 +122,7 @@ private:
     std::vector<Gfx::Image> gbufferAlbedoImages{};
     std::vector<Gfx::Image> gbufferNormalImages{};
     std::vector<Gfx::Image> gbufferPositionImages{};
+    std::vector<Gfx::Image> gbufferInstanceIDImages{};
     vk::raii::Sampler gbufferSampler = nullptr;
     std::vector<Gfx::Image> shadowImages{};
     vk::raii::Sampler shadowSampler = nullptr;
@@ -224,6 +225,7 @@ private:
             { rhi.getSurfaceFormat() },
             { vk::Format::eR16G16B16A16Sfloat },
             { vk::Format::eR32G32B32A32Sfloat },
+            { vk::Format::eR32Uint },
         };
         pipelineCreateInfo.depthAttachment = { rhi.getDepthFormat() };
 
@@ -238,10 +240,12 @@ private:
         };
         pipelineCreateInfo.descriptorSetLayoutBindings = {
             { 0, vk::DescriptorType::eUniformBuffer,        1, vk::ShaderStageFlagBits::eFragment, nullptr },
-            { 1, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr },
+            { 1, vk::DescriptorType::eStorageBuffer,        1, vk::ShaderStageFlagBits::eFragment, nullptr },
             { 2, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr },
             { 3, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr },
             { 4, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr },
+            { 5, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr },
+            { 6, vk::DescriptorType::eSampledImage, 1, vk::ShaderStageFlagBits::eFragment, nullptr },
 		};
         pipelineCreateInfo.colorAttachments = { { rhi.getSurfaceFormat() } };
 
@@ -736,10 +740,14 @@ private:
         vk::ImageCreateInfo positionInfo = albedoInfo;
         positionInfo.format = vk::Format::eR32G32B32A32Sfloat;
 
+        vk::ImageCreateInfo instanceIDInfo = albedoInfo;
+        instanceIDInfo.format = vk::Format::eR32Uint;
+
         for (size_t i = 0; i < rhi.getMaxFramesInFlight(); i++) {
             gbufferAlbedoImages.emplace_back(rhi.createImage(albedoInfo));
             gbufferNormalImages.emplace_back(rhi.createImage(normalInfo));
             gbufferPositionImages.emplace_back(rhi.createImage(positionInfo));
+            gbufferInstanceIDImages.emplace_back(rhi.createImage(instanceIDInfo));
         }
 
         vk::SamplerCreateInfo samplerInfo{};
@@ -808,6 +816,7 @@ private:
         std::vector<vk::DescriptorImageInfo> albedoImageInfos{};
         std::vector<vk::DescriptorImageInfo> normalImageInfos{};
         std::vector<vk::DescriptorImageInfo> positionImageInfos{};
+        std::vector<std::vector<vk::DescriptorImageInfo>> instanceIDImageInfos(maxFramesInFlight);
         albedoImageInfos.reserve(maxFramesInFlight);
         normalImageInfos.reserve(maxFramesInFlight);
         positionImageInfos.reserve(maxFramesInFlight);
@@ -816,11 +825,13 @@ private:
             imageInfo.sampler = gbufferSampler;
             imageInfo.imageView = gbufferAlbedoImages[i].getImageView();
             imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-            albedoImageInfos.emplace_back(std::move(imageInfo));
+            albedoImageInfos.emplace_back(imageInfo);
             imageInfo.imageView = gbufferNormalImages[i].getImageView();
-            normalImageInfos.emplace_back(std::move(imageInfo));
+            normalImageInfos.emplace_back(imageInfo);
             imageInfo.imageView = gbufferPositionImages[i].getImageView();
-            positionImageInfos.emplace_back(std::move(imageInfo));
+            positionImageInfos.emplace_back(imageInfo);
+            imageInfo.imageView = gbufferInstanceIDImages[i].getImageView();
+            instanceIDImageInfos[i] = { imageInfo };
         }
 
         std::vector<std::vector<vk::DescriptorImageInfo>> shadowImageInfos(maxFramesInFlight);
@@ -836,10 +847,12 @@ private:
         lightingConfig.layout = lightingPipeline.getDescriptorSetLayout();
         lightingConfig.bindings = {
             { vk::DescriptorType::eUniformBuffer, std::vector<vk::DescriptorBufferInfo>(uboInfos) },
+            { vk::DescriptorType::eStorageBuffer, std::vector<vk::DescriptorBufferInfo>{ ssboInfo } },
             { vk::DescriptorType::eCombinedImageSampler, std::vector<std::vector<vk::DescriptorImageInfo>>{ albedoImageInfos } },
             { vk::DescriptorType::eCombinedImageSampler, std::vector<std::vector<vk::DescriptorImageInfo>>{ normalImageInfos } },
             { vk::DescriptorType::eCombinedImageSampler, std::vector<std::vector<vk::DescriptorImageInfo>>{ positionImageInfos } },
             { vk::DescriptorType::eCombinedImageSampler, std::vector<std::vector<vk::DescriptorImageInfo>>(shadowImageInfos) },
+            { vk::DescriptorType::eSampledImage, std::vector<std::vector<vk::DescriptorImageInfo>>(instanceIDImageInfos) },
         };
 
         Gfx::DescriptorSetConfig postprocConfig{};
@@ -943,12 +956,14 @@ private:
         Gfx::RenderPassNode gbufferPass{ "GBufferPass" };
 
         std::vector<vk::Image> albedoImageHandles(gbufferAlbedoImages.size());
-        std::vector<vk::Image> normalImageHandles(gbufferAlbedoImages.size());
-        std::vector<vk::Image> positionImageHandles(gbufferAlbedoImages.size());
+        std::vector<vk::Image> normalImageHandles(gbufferNormalImages.size());
+        std::vector<vk::Image> positionImageHandles(gbufferPositionImages.size());
+        std::vector<vk::Image> instanceIDImageHandles(gbufferInstanceIDImages.size());
         for (size_t i = 0; i < gbufferAlbedoImages.size(); ++i) {
             albedoImageHandles[i] = *gbufferAlbedoImages[i];
             normalImageHandles[i] = *gbufferNormalImages[i];
             positionImageHandles[i] = *gbufferPositionImages[i];
+            instanceIDImageHandles[i] = *gbufferInstanceIDImages[i];
         }
 
         Gfx::RenderPassNode::AttachmentTransitionInfo gbufferTransition{ {}, vk::ImageAspectFlagBits::eColor };
@@ -963,6 +978,8 @@ private:
         gbufferTransition.images        = normalImageHandles;
         gbufferPass.attachmentInfos.emplace_back(gbufferTransition);
         gbufferTransition.images        = positionImageHandles;
+        gbufferPass.attachmentInfos.emplace_back(gbufferTransition);
+        gbufferTransition.images = instanceIDImageHandles;
         gbufferPass.attachmentInfos.emplace_back(gbufferTransition);
 
         Gfx::RenderPassNode::AttachmentTransitionInfo sceneDepthTransition{ rhi.getDepthImages(), vk::ImageAspectFlagBits::eDepth };
@@ -991,6 +1008,8 @@ private:
             colorAttachmentInfo.imageView   = gbufferNormalImages[imageIndex].getImageView();
             colorAttachmentInfos.emplace_back(colorAttachmentInfo);
             colorAttachmentInfo.imageView   = gbufferPositionImages[imageIndex].getImageView();
+            colorAttachmentInfos.emplace_back(std::move(colorAttachmentInfo));
+            colorAttachmentInfo.imageView = gbufferInstanceIDImages[imageIndex].getImageView();
             colorAttachmentInfos.emplace_back(std::move(colorAttachmentInfo));
 
             vk::ClearValue clearDepth = vk::ClearDepthStencilValue(1, 0);
@@ -1037,6 +1056,8 @@ private:
         gbufferTransition.images        = normalImageHandles;
         lightingPass.attachmentInfos.emplace_back(gbufferTransition);
         gbufferTransition.images        = positionImageHandles;
+        lightingPass.attachmentInfos.emplace_back(std::move(gbufferTransition));
+        gbufferTransition.images        = instanceIDImageHandles;
         lightingPass.attachmentInfos.emplace_back(std::move(gbufferTransition));
 
         // Transition intermediate color image: color attachment -> shader read
