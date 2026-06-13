@@ -25,15 +25,20 @@ float4 main(VSOutput input) : SV_Target
     uint width, height;
     instanceIDs.GetDimensions(width, height);
     int2 pixelCoords = int2(input.uv.x * width, input.uv.y * height);
-    
+
     float4 colour = albedo.Sample(albedoSampler, input.uv);
     float4 normalWS = normals.Sample(normalSampler, input.uv);
     float4 positionWS = positions.Sample(positionSampler, input.uv);
     uint instanceID = instanceIDs.Load(int3(pixelCoords, 0));
 
+    if (length(normalWS.xyz) < 0.0001)
+    {
+        discard;
+    }
+    
     float diffuse = 1.0;
     float shadowFactor = 1.0f;
-    
+
     if (instanceID > ubo.particleCount)
     {
         diffuse = saturate(dot(normalize(normalWS.xyz), ubo.nLightDir.xyz));

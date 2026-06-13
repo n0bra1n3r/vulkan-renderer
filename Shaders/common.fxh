@@ -16,7 +16,7 @@ struct UniformBuffer
     float4 nLightDir;
     uint particleCount;
     float time;
-    uint2 pad;
+    uint2 res;
 };
 
 struct StorageBuffer
