@@ -35,7 +35,7 @@ float4 main(VSOutput input) : SV_Target
     {
         discard;
     }
-    
+
     float diffuse = 1.0;
     float shadowFactor = 1.0f;
 
@@ -54,7 +54,8 @@ float4 main(VSOutput input) : SV_Target
         }
     }
 
-    float3 lit = colour.rgb * diffuse * shadowFactor;
+    float3 lit = colour.rgb * ubo.sunColor.rgb * diffuse * shadowFactor
+               + colour.rgb * ubo.ambientColor.rgb;
 
     float3 N = normalize(normalWS.xyz);
     for (uint i = 0; i < ubo.particleCount; i++)

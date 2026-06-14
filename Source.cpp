@@ -89,6 +89,8 @@ struct UniformBufferObject
     uint32_t particleCount;
 	float time;
     glm::uvec2 res;
+    glm::vec4 sunColor;
+    glm::vec4 ambientColor;
 };
 
 class HelloTriangleApplication {
@@ -1272,6 +1274,8 @@ private:
 		ubo.time = time;
         ubo.res.x = swapChainExtent.width;
         ubo.res.y = swapChainExtent.height;
+        ubo.sunColor = glm::vec4(1.0f, 0.95f, 0.85f, 0.0f);
+        ubo.ambientColor = glm::vec4(0.3f, 0.5f, 0.8f, 0.0f);
 
         memcpy(uniformBuffers[currentImage].getMappedData(), &ubo, sizeof(ubo));
     }

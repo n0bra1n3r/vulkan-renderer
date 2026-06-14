@@ -17,6 +17,8 @@ struct UniformBuffer
     uint particleCount;
     float time;
     uint2 res;
+    float4 sunColor;
+    float4 ambientColor;
 };
 
 struct StorageBuffer

@@ -203,8 +203,8 @@ float4 main(float4 fragCoord : SV_Position) : SV_Target
                     float3 ms = exp(-lightDen * 0.02 * float3(0.95, 0.97, 1.0)) * 0.35 * depth;
                     float3 transToSun = shadow + ms;
 
-                    float3 direct = Cloud_SunLum * transToSun * phase;
-                    float3 ambient = Cloud_AmbLum * (0.5 + 0.5 * (1.0 - depth));
+                    float3 direct = ubo.sunColor.rgb * transToSun * phase;
+                    float3 ambient = ubo.ambientColor.rgb * (0.5 + 0.5 * (1.0 - depth));
 
                     float3 S = (direct + ambient) * density;
                     color += S * transmittance * STEP_SIZE * 0.12;
@@ -222,7 +222,7 @@ float4 main(float4 fragCoord : SV_Position) : SV_Target
 
     float3 finalColor = color + skyColor * transmittance;
     finalColor = finalColor / (1.0 + finalColor);
-    
+
     // Using abs() in pow prevents compilation errors/warnings in strict HLSL environments
     finalColor = pow(abs(finalColor), float3(1.0 / 2.2, 1.0 / 2.2, 1.0 / 2.2));
 
