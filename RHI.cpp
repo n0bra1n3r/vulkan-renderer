@@ -599,11 +599,15 @@ Gfx::Pipeline RHI::createGraphicsPipeline(const Gfx::GraphicsPipelineCreateInfo&
 	colorAttachmentFormats.reserve(createInfo.colorAttachments.size());
 	colorBlendAttachments.reserve(createInfo.colorAttachments.size());
 
-    for (auto& colorAttachment : createInfo.colorAttachments) {
-        colorAttachmentFormats.emplace_back(colorAttachment.format);
+    for (const auto& colorFormat : createInfo.colorAttachments) {
+        colorAttachmentFormats.emplace_back(colorFormat);
 
         vk::PipelineColorBlendAttachmentState colorBlendAttachment{};
-        colorBlendAttachment.colorWriteMask = colorAttachment.writeMask;
+        colorBlendAttachment.colorWriteMask =
+            vk::ColorComponentFlagBits::eR |
+			vk::ColorComponentFlagBits::eG |
+			vk::ColorComponentFlagBits::eB |
+			vk::ColorComponentFlagBits::eA;
 
         colorBlendAttachments.emplace_back(std::move(colorBlendAttachment));
 	}
@@ -623,7 +627,10 @@ Gfx::Pipeline RHI::createGraphicsPipeline(const Gfx::GraphicsPipelineCreateInfo&
     vk::PipelineRenderingCreateInfo pipelineRenderingCreateInfo{};
     pipelineRenderingCreateInfo.colorAttachmentCount = static_cast<uint32_t>(colorAttachmentFormats.size());
     pipelineRenderingCreateInfo.pColorAttachmentFormats = colorAttachmentFormats.data();
-	pipelineRenderingCreateInfo.depthAttachmentFormat = createInfo.depthAttachment.format;
+	pipelineRenderingCreateInfo.depthAttachmentFormat =
+	    createInfo.depthAttachment.has_value() ?
+			*createInfo.depthAttachment :
+			vk::Format::eUndefined;
 
     std::vector<vk::PipelineShaderStageCreateInfo> shaderStages{};
     std::vector<vk::raii::ShaderModule> shaderModules{};
@@ -673,7 +680,7 @@ Gfx::Pipeline RHI::createGraphicsPipeline(const Gfx::GraphicsPipelineCreateInfo&
     colorBlending.pAttachments = colorBlendAttachments.data();
 
     vk::PipelineDepthStencilStateCreateInfo depthStencil{};
-    depthStencil.depthTestEnable = createInfo.depthAttachment.format != vk::Format::eUndefined;
+    depthStencil.depthTestEnable = createInfo.depthAttachment.has_value();
     depthStencil.depthWriteEnable = depthStencil.depthTestEnable;
     depthStencil.depthCompareOp = vk::CompareOp::eLess;
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <variant>
 #include <vulkan/vulkan_raii.hpp>
 
@@ -16,29 +17,14 @@ namespace Gfx
 		vk::ShaderStageFlagBits stage;
 	};
 
-	struct ColorAttachmentDesc
-	{
-		vk::Format format;
-		vk::ColorComponentFlags writeMask =
-			vk::ColorComponentFlagBits::eR |
-			vk::ColorComponentFlagBits::eG |
-			vk::ColorComponentFlagBits::eB |
-			vk::ColorComponentFlagBits::eA;
-	};
-
-	struct DepthAttachmentDesc
-	{
-		vk::Format format;
-	};
-
 	struct GraphicsPipelineCreateInfo
 	{
 		std::vector<ShaderDesc> shaders;
 		std::vector<vk::VertexInputBindingDescription> vertexInputBindings;
 		std::vector<vk::VertexInputAttributeDescription> vertexInputAttributes;
 		std::vector<vk::DescriptorSetLayoutBinding> descriptorSetLayoutBindings;
-		std::vector<ColorAttachmentDesc> colorAttachments;
-		DepthAttachmentDesc depthAttachment;
+		std::vector<vk::Format> colorAttachments;
+		std::optional<vk::Format> depthAttachment;
 	};
 
 	struct ComputePipelineCreateInfo
