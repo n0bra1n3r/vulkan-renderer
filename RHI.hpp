@@ -58,17 +58,17 @@ namespace Gfx
 
 		const vk::raii::PhysicalDevice& getPhysicalDevice() const { return m_physicalDevice; }
 		const vk::raii::Device& getDevice() const { return m_device; }
-		const vk::raii::SwapchainKHR& getSwapChain() const { return m_swapChain; }
-		const vk::raii::Queue& getGraphicsQueue() const { return m_graphicsQueue; }
-		const vk::raii::Queue& getPresentQueue() const { return m_presentQueue; }
 		uint8_t getMaxFramesInFlight() const { return m_maxFramesInFlight; }
 		const vk::raii::CommandPool& getCommandPool() const { return m_commandPool; }
 		vk::Format getSurfaceFormat() const { return m_surfaceFormat.format; }
 		vk::Format getDepthFormat() const { return m_depthFormat; }
-		const std::vector<vk::Image>& getDepthImages() const { return m_depthImageObjs; }
+		std::vector<vk::Image> getSwapChainImages() const { return m_swapChain.getImages(); }
+		std::vector<vk::Image> getDepthImages() const { return m_depthImageObjs; }
 		const vk::raii::ImageView& getSwapChainImageView(int index) const { return m_swapChainImageViews[index]; }
 		const vk::raii::ImageView& getDepthImageView(int index) const;
 		vk::Extent2D getSwapChainExtent() const { return m_swapChainExtent; }
+
+		std::pair<vk::Result, uint32_t> acquireNextSwapChainImage(const vk::Semaphore& signal) const { return m_swapChain.acquireNextImage(UINT64_MAX, signal, nullptr); }
 
 		Buffer createBuffer(const vk::BufferCreateInfo& bufferInfo, vk::MemoryPropertyFlags memProperties = vk::MemoryPropertyFlagBits::eDeviceLocal);
 		void updateBuffer(const Buffer& buffer, const void* contentData, size_t contentSize);
@@ -103,6 +103,8 @@ namespace Gfx
 		void updateImage(const Image& image, const std::vector<uint8_t>& data) {
 			updateImage(image, data.data(), data.size());
 		}
+
+		void presentSwapChainImage(uint32_t imageIndex, const vk::SubmitInfo& submitInfo, const vk::Fence& inFlightFence) const;
 
 	private:
 		void initInstance(const std::string& appName, const std::vector<const char*>& extensions);

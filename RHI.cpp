@@ -852,3 +852,18 @@ std::vector<std::vector<Gfx::DescriptorSet>> RHI::createDescriptorSets(const std
 
     return descriptorSetsArray;
 }
+
+void RHI::presentSwapChainImage(uint32_t imageIndex, const vk::SubmitInfo& submitInfo, const vk::Fence& inFlightFence) const
+{
+    m_graphicsQueue.submit(submitInfo, inFlightFence);
+
+    // Present: wait on renderFinished
+    vk::PresentInfoKHR presentInfo{};
+    presentInfo.waitSemaphoreCount = 1;
+    presentInfo.pWaitSemaphores = submitInfo.pSignalSemaphores;
+    presentInfo.swapchainCount = 1;
+    presentInfo.pSwapchains = &*m_swapChain;
+    presentInfo.pImageIndices = &imageIndex;
+
+    m_presentQueue.presentKHR(presentInfo);
+}

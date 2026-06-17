@@ -2,7 +2,7 @@
 
 using Gfx::RenderGraph;
 
-RenderGraph::RenderGraph(const RHI& rhi): 
+RenderGraph::RenderGraph(const RHI& rhi):
     m_rhi(rhi)
 {
 }
@@ -51,7 +51,7 @@ void RenderGraph::executeFrame()
     m_rhi.getDevice().waitForFences(*inFlightFence, true, UINT64_MAX);
 
     // Acquire next image
-    auto acquireResult = m_rhi.getSwapChain().acquireNextImage(UINT64_MAX, *presentComplete, nullptr);
+    auto acquireResult = m_rhi.acquireNextSwapChainImage(*presentComplete);
     auto imageIndex = acquireResult.second;
 
     // reset command buffer for this image
@@ -64,9 +64,9 @@ void RenderGraph::executeFrame()
         std::vector<vk::ImageMemoryBarrier2> imageBarriers{};
         std::vector<vk::BufferMemoryBarrier2> bufferBarriers{};
 
-        for (auto& transitionInfo : pass.attachmentInfos) 
+        for (auto& transitionInfo : pass.attachmentInfos)
         {
-            if (transitionInfo.oldLayout != transitionInfo.newLayout) 
+            if (transitionInfo.oldLayout != transitionInfo.newLayout)
             {
                 vk::ImageMemoryBarrier2 barrier{};
                 barrier.srcStageMask = transitionInfo.srcStageMask;
@@ -95,7 +95,7 @@ void RenderGraph::executeFrame()
 			bufferBarriers.emplace_back(std::move(barrier));
         }
 
-        if (imageBarriers.size()) 
+        if (imageBarriers.size())
         {
             vk::DependencyInfo dependencyInfo{};
             dependencyInfo.imageMemoryBarrierCount = static_cast<uint32_t>(imageBarriers.size());
@@ -129,17 +129,7 @@ void RenderGraph::executeFrame()
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = &*renderFinished;
 
-    m_rhi.getGraphicsQueue().submit(submitInfo, *inFlightFence);
-
-    // Present: wait on renderFinished
-    vk::PresentInfoKHR presentInfo{};
-    presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = &*renderFinished;
-    presentInfo.swapchainCount = 1;
-    presentInfo.pSwapchains = &*m_rhi.getSwapChain();
-    presentInfo.pImageIndices = &imageIndex;
-
-    m_rhi.getPresentQueue().presentKHR(presentInfo);
+    m_rhi.presentSwapChainImage(imageIndex, submitInfo, *inFlightFence);
 
     // Advance frame index
     ++m_currentFrame;

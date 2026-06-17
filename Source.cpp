@@ -1192,7 +1192,7 @@ private:
         postprocPass.attachmentInfos.emplace_back(std::move(postprocImageTransition));
 
         // Transition swap chain image: undefined -> color attachment
-        Gfx::RenderPassNode::AttachmentTransitionInfo swapchainTransition{ rhi.getSwapChain().getImages(), vk::ImageAspectFlagBits::eColor };
+        Gfx::RenderPassNode::AttachmentTransitionInfo swapchainTransition{ rhi.getSwapChainImages(), vk::ImageAspectFlagBits::eColor };
         swapchainTransition.oldLayout     = vk::ImageLayout::eUndefined;
         swapchainTransition.newLayout     = vk::ImageLayout::eColorAttachmentOptimal;
         swapchainTransition.srcAccessMask = vk::AccessFlagBits2::eNone;
