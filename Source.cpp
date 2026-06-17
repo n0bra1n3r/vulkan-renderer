@@ -1163,18 +1163,11 @@ private:
             colorAttachmentInfo.loadOp      = vk::AttachmentLoadOp::eLoad;
             colorAttachmentInfo.storeOp     = vk::AttachmentStoreOp::eStore;
 
-            vk::RenderingAttachmentInfo depthAttachmentInfo{};
-            depthAttachmentInfo.imageView = rhi.getDepthImageView(imageIndex);
-            depthAttachmentInfo.imageLayout = vk::ImageLayout::eDepthReadOnlyStencilAttachmentOptimal;
-            depthAttachmentInfo.loadOp = vk::AttachmentLoadOp::eLoad;
-            depthAttachmentInfo.storeOp = vk::AttachmentStoreOp::eDontCare;
-
             vk::RenderingInfo renderingInfo{};
             renderingInfo.renderArea.extent    = swapChainExtent;
             renderingInfo.layerCount           = 1;
             renderingInfo.colorAttachmentCount = 1;
             renderingInfo.pColorAttachments    = &colorAttachmentInfo;
-            renderingInfo.pDepthAttachment = &depthAttachmentInfo;
 
             cmd.beginRendering(renderingInfo);
 
