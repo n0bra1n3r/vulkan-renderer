@@ -30,6 +30,60 @@
 
 namespace Gfx
 {
+    struct ComputePipelineBuilder
+    {
+        ComputePipelineBuilder(RHI& rhi) : m_rhi(rhi) {}
+
+        ComputePipelineBuilder& shader(std::string name)
+        {
+            pipelineCreateInfo.shader = name;
+            return *this;
+        }
+
+        ComputePipelineBuilder shaderBinding(const Buffer& buffer)
+        {
+            auto index = static_cast<uint32_t>(pipelineCreateInfo.descriptorSetLayoutBindings.size());
+            const auto& createInfo = buffer.getCreateInfo();
+            auto descriptorType =
+                (createInfo.usage & vk::BufferUsageFlagBits::eStorageBuffer) ?
+                vk::DescriptorType::eStorageBuffer :
+                vk::DescriptorType::eUniformBuffer;
+            pipelineCreateInfo.descriptorSetLayoutBindings.emplace_back(
+                index,
+                descriptorType,
+                1,
+                vk::ShaderStageFlagBits::eCompute,
+                nullptr);
+            return *this;
+        }
+
+        ComputePipelineBuilder shaderVariable(const Buffer& buffer)
+        {
+            auto index = static_cast<uint32_t>(pipelineCreateInfo.descriptorSetLayoutBindings.size());
+            const auto& createInfo = buffer.getCreateInfo();
+            auto descriptorType =
+                (createInfo.usage & vk::BufferUsageFlagBits::eStorageBuffer) ?
+                vk::DescriptorType::eStorageBuffer :
+                vk::DescriptorType::eUniformBuffer;
+            pipelineCreateInfo.descriptorSetLayoutBindings.emplace_back(
+                index,
+                descriptorType,
+                1,
+                vk::ShaderStageFlagBits::eCompute,
+                nullptr);
+            return *this;
+        }
+
+        Pipeline build()
+        {
+            return m_rhi.createComputePipeline(pipelineCreateInfo);
+        }
+
+    private:
+        RHI& m_rhi;
+        ComputePipelineCreateInfo pipelineCreateInfo;
+    };
+
     struct GraphicsPipelineBuilder
     {
         GraphicsPipelineBuilder(RHI& rhi) : m_rhi(rhi) {}
@@ -226,9 +280,16 @@ namespace Gfx
         // use pipelineBarrier2 (ImageMemoryBarrier2 + DependencyInfo).
         void executeFrame();
 
-        GraphicsPipelineBuilder buildGraphicsPipeline(RHI& rhi)
+        ComputePipelineBuilder& computePipeline(RHI& rhi)
         {
-            return GraphicsPipelineBuilder(rhi);
+            m_builders.emplace_back(ComputePipelineBuilder(rhi));
+            return std::get<ComputePipelineBuilder>(m_builders.back());
+        }
+
+        GraphicsPipelineBuilder& graphicsPipeline(RHI& rhi)
+        {
+            m_builders.emplace_back(GraphicsPipelineBuilder(rhi));
+            return std::get<GraphicsPipelineBuilder>(m_builders.back());
         }
 
     private:
@@ -246,5 +307,7 @@ namespace Gfx
         std::vector<vk::raii::Fence> m_inFlightFences;
 
         uint64_t m_currentFrame = 0;
+
+        std::vector<std::variant<ComputePipelineBuilder, GraphicsPipelineBuilder>> m_builders;
     };
 }

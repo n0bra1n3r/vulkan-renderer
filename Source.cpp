@@ -168,36 +168,14 @@ private:
         createIndirectBuffer();
         createUniformBuffers();
         createStorageBuffer();
-        createParticlePipeline();
-        createShadowPipeline();
-        createGBufferPipeline();
-        createCloudPipeline();
-        createLightingPipeline();
-        createPostprocPipeline();
-        createDescriptorSets();
 
-        initRenderGraph();
-    }
+        particlePipeline = graph.computePipeline(rhi)
+            .shader("Shaders/particle.comp.spv")
+            .shaderBinding(uniformBuffers[0])
+            .shaderVariable(storageBuffer)
+            .build();
 
-    std::vector<const char*> getRequiredExtensions() {
-        uint32_t glfwExtensionCount = 0;
-        auto glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-        return std::vector<const char*>(glfwExtensions, glfwExtensions + glfwExtensionCount);
-    }
-
-    void createParticlePipeline() {
-        Gfx::ComputePipelineCreateInfo pipelineCreateInfo{};
-        pipelineCreateInfo.shader = "Shaders/particle.comp.spv";
-        pipelineCreateInfo.descriptorSetLayoutBindings = {
-            { 0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eCompute, nullptr },
-            { 1, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute, nullptr },
-        };
-
-        particlePipeline = rhi.createComputePipeline(pipelineCreateInfo);
-    }
-
-    void createShadowPipeline() {
-        shadowPipeline = graph.buildGraphicsPipeline(rhi)
+        shadowPipeline = graph.graphicsPipeline(rhi)
             .vertexShader("Shaders/shadow.vert.spv")
             .fragmentShader("Shaders/shadow.frag.spv")
             .vertexType<Vertex>()
@@ -205,10 +183,8 @@ private:
             .vertexShaderBinding(storageBuffer)
             .renderTargetSwapChainDepth()
             .build();
-    }
 
-    void createGBufferPipeline() {
-        gbufferPipeline = graph.buildGraphicsPipeline(rhi)
+        gbufferPipeline = graph.graphicsPipeline(rhi)
             .vertexShader("Shaders/gbuffer.vert.spv")
             .fragmentShader("Shaders/gbuffer.frag.spv")
             .vertexType<Vertex>()
@@ -221,19 +197,15 @@ private:
             .renderTarget(gbufferInstanceIDImages[0])
             .renderTargetSwapChainDepth()
             .build();
-    }
 
-    void createCloudPipeline() {
-        cloudPipeline = graph.buildGraphicsPipeline(rhi)
+        cloudPipeline = graph.graphicsPipeline(rhi)
             .vertexShader("Shaders/cloud.vert.spv")
             .fragmentShader("Shaders/cloud.frag.spv")
             .fragmentShaderBinding(uniformBuffers[0])
             .renderTargetSwapChainColor()
             .build();
-    }
-
-    void createLightingPipeline() {
-        lightingPipeline = graph.buildGraphicsPipeline(rhi)
+ 
+        lightingPipeline = graph.graphicsPipeline(rhi)
             .vertexShader("Shaders/lighting.vert.spv")
             .fragmentShader("Shaders/lighting.frag.spv")
             .fragmentShaderBinding(uniformBuffers[0])
@@ -246,16 +218,23 @@ private:
             .renderTargetSwapChainColor()
             .renderTargetSwapChainDepth()
             .build();
-    }
 
-    void createPostprocPipeline() {
-        postprocPipeline = graph.buildGraphicsPipeline(rhi)
+        postprocPipeline = graph.graphicsPipeline(rhi)
             .vertexShader("Shaders/postproc.vert.spv")
             .fragmentShader("Shaders/postproc.frag.spv")
             .fragmentShaderBinding(uniformBuffers[0])
             .fragmentShaderBinding(postprocImages[0])
             .renderTargetSwapChainColor()
             .build();
+
+        createDescriptorSets();
+        initRenderGraph();
+    }
+
+    std::vector<const char*> getRequiredExtensions() {
+        uint32_t glfwExtensionCount = 0;
+        auto glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+        return std::vector<const char*>(glfwExtensions, glfwExtensions + glfwExtensionCount);
     }
 
     std::vector<Vertex> generateSphere(uint32_t latSegments = 8, uint32_t lonSegments = 8)
