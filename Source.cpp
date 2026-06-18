@@ -187,7 +187,7 @@ private:
 
     void createParticlePipeline() {
         Gfx::ComputePipelineCreateInfo pipelineCreateInfo{};
-        pipelineCreateInfo.shader = { "Shaders/particle.comp.spv", vk::ShaderStageFlagBits::eCompute };
+        pipelineCreateInfo.shader = "Shaders/particle.comp.spv";
         pipelineCreateInfo.descriptorSetLayoutBindings = {
             { 0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eCompute, nullptr },
             { 1, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute, nullptr },

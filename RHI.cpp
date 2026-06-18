@@ -645,12 +645,12 @@ Gfx::Pipeline RHI::createGraphicsPipeline(const Gfx::GraphicsPipelineCreateInfo&
 	shaderStages.reserve(createInfo.shaders.size());
 	shaderModules.reserve(createInfo.shaders.size());
 
-    for (auto& shader : createInfo.shaders) {
-        auto code = readFile(shader.path);
+    for (const auto& shader : createInfo.shaders) {
+        auto code = readFile(shader.first);
         auto module = createShaderModule(m_device, code);
 
         vk::PipelineShaderStageCreateInfo shaderStageInfo{};
-        shaderStageInfo.stage = shader.stage;
+        shaderStageInfo.stage = shader.second;
         shaderStageInfo.module = module;
         shaderStageInfo.pName = "main";
 
@@ -730,11 +730,11 @@ Gfx::Pipeline RHI::createComputePipeline(const Gfx::ComputePipelineCreateInfo& c
 
     vk::raii::PipelineLayout pipelineLayout(m_device, pipelineLayoutInfo);
 
-    auto code = readFile(createInfo.shader.path);
+    auto code = readFile(createInfo.shader);
     auto shaderModule = createShaderModule(m_device, code);
 
     vk::PipelineShaderStageCreateInfo shaderStageInfo{};
-    shaderStageInfo.stage = createInfo.shader.stage;
+    shaderStageInfo.stage = vk::ShaderStageFlagBits::eCompute;
     shaderStageInfo.module = shaderModule;
     shaderStageInfo.pName = "main";
 

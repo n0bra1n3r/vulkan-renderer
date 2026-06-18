@@ -11,15 +11,9 @@ namespace Gfx
 	class Image;
 	class Pipeline;
 
-	struct ShaderDesc
-	{
-		std::string path;
-		vk::ShaderStageFlagBits stage;
-	};
-
 	struct GraphicsPipelineCreateInfo
 	{
-		std::vector<ShaderDesc> shaders;
+		std::vector<std::pair<std::string, vk::ShaderStageFlagBits>> shaders;
 		std::vector<vk::VertexInputBindingDescription> vertexInputBindings;
 		std::vector<vk::VertexInputAttributeDescription> vertexInputAttributes;
 		std::vector<vk::DescriptorSetLayoutBinding> descriptorSetLayoutBindings;
@@ -29,7 +23,7 @@ namespace Gfx
 
 	struct ComputePipelineCreateInfo
 	{
-		ShaderDesc shader;
+		std::string shader;
 		std::vector<vk::DescriptorSetLayoutBinding> descriptorSetLayoutBindings;
 	};
 
