@@ -71,6 +71,7 @@ namespace Gfx
 		std::pair<vk::Result, uint32_t> acquireNextSwapChainImage(const vk::Semaphore& signal) const { return m_swapChain.acquireNextImage(UINT64_MAX, signal, nullptr); }
 
 		Buffer createBuffer(const vk::BufferCreateInfo& bufferInfo, vk::MemoryPropertyFlags memProperties = vk::MemoryPropertyFlagBits::eDeviceLocal);
+		Buffer createBuffer(const vk::BufferCreateInfo& bufferInfo, const void* contentData, size_t contentSize, vk::MemoryPropertyFlags memProperties = vk::MemoryPropertyFlagBits::eDeviceLocal);
 		void updateBuffer(const Buffer& buffer, const void* contentData, size_t contentSize);
 
 		Image createImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryPropertyFlags properties = vk::MemoryPropertyFlagBits::eDeviceLocal);
@@ -88,6 +89,16 @@ namespace Gfx
 			std::array<std::vector<DescriptorSet>, S> result{};
 			std::move(sets.begin(), sets.end(), result.begin());
 			return result;
+		}
+
+		template<typename T>
+		Buffer createBuffer(const vk::BufferCreateInfo& bufferInfo, const T& data, vk::MemoryPropertyFlags memProperties = vk::MemoryPropertyFlagBits::eDeviceLocal) {
+		    return createBuffer(bufferInfo, &data, sizeof(T), memProperties);
+		}
+
+		template<typename T>
+		Buffer createBuffer(const vk::BufferCreateInfo& bufferInfo, const std::vector<T>& data, vk::MemoryPropertyFlags memProperties = vk::MemoryPropertyFlagBits::eDeviceLocal) {
+		    return createBuffer(bufferInfo, data.data(), data.size() * sizeof(T), memProperties);
 		}
 
 		template<typename T>

@@ -693,8 +693,7 @@ private:
         bufferInfo.size = sizeof(vertices[0]) * vertices.size();
         bufferInfo.usage = vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst;
 
-        vertexBuffer = rhi.createBuffer(bufferInfo);
-		rhi.updateBuffer(vertexBuffer, vertices);
+        vertexBuffer = rhi.createBuffer(bufferInfo, vertices);
 	}
 
     void createIndexBuffer() {
@@ -702,8 +701,7 @@ private:
         bufferInfo.size = sizeof(indices[0]) * indices.size();
         bufferInfo.usage = vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst;
 
-        indexBuffer = rhi.createBuffer(bufferInfo);
-		rhi.updateBuffer(indexBuffer, indices);
+        indexBuffer = rhi.createBuffer(bufferInfo, indices);
     }
 
     void createIndirectBuffer() {
@@ -711,8 +709,7 @@ private:
         bufferInfo.size = sizeof(drawCmds[0]) * drawCmds.size();
         bufferInfo.usage = vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst;
 
-        indirectBuffer = rhi.createBuffer(bufferInfo);
-        rhi.updateBuffer(indirectBuffer, drawCmds);
+        indirectBuffer = rhi.createBuffer(bufferInfo, drawCmds);
 	}
 
     void createUniformBuffers() {
@@ -736,8 +733,7 @@ private:
         bufferInfo.size = sizeof(instances[0]) * instances.size();
         bufferInfo.usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst;
 
-        storageBuffer = rhi.createBuffer(bufferInfo);
-        rhi.updateBuffer(storageBuffer, instances);
+        storageBuffer = rhi.createBuffer(bufferInfo, instances);
     }
 
     void createGBufferResources() {

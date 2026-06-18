@@ -486,6 +486,13 @@ Gfx::Buffer RHI::createBuffer(const vk::BufferCreateInfo& bufferInfo, vk::Memory
     return Gfx::Buffer(std::move(buffer), std::move(bufferMemory), bufferInfo.size);
 }
 
+Gfx::Buffer RHI::createBuffer(const vk::BufferCreateInfo& bufferInfo, const void* contentData, size_t contentSize, vk::MemoryPropertyFlags memProperties)
+{
+    auto buffer = createBuffer(bufferInfo, memProperties);
+    updateBuffer(buffer, contentData, contentSize);
+    return buffer;
+}
+
 void RHI::updateBuffer(const Buffer& buffer, const void* contentData, size_t contentSize)
 {
     vk::BufferCreateInfo stagingInfo{};
