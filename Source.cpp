@@ -135,7 +135,7 @@ private:
     Gfx::Buffer indexBuffer = nullptr;
     Gfx::Buffer indirectBuffer = nullptr;
     Gfx::Buffer storageBuffer = nullptr;
-    std::vector<Gfx::Buffer> uniformBuffers{};
+    Gfx::Buffer uniformBuffer = nullptr;
     std::vector<Gfx::DescriptorSet> computeDescriptorSets{};
     std::vector<Gfx::DescriptorSet> shadowDescriptorSets{};
     std::vector<Gfx::DescriptorSet> gbufferDescriptorSets{};
@@ -171,7 +171,7 @@ private:
 
         particlePipeline = graph.computePipeline(rhi)
             .shader("Shaders/particle.comp.spv")
-            .shaderBinding(uniformBuffers[0])
+            .shaderBinding(uniformBuffer)
             .shaderVariable(storageBuffer)
             .build();
 
@@ -179,7 +179,7 @@ private:
             .vertexShader("Shaders/shadow.vert.spv")
             .fragmentShader("Shaders/shadow.frag.spv")
             .vertexType<Vertex>()
-            .vertexShaderBinding(uniformBuffers[0])
+            .vertexShaderBinding(uniformBuffer)
             .vertexShaderBinding(storageBuffer)
             .renderTargetSwapChainDepth()
             .build();
@@ -188,7 +188,7 @@ private:
             .vertexShader("Shaders/gbuffer.vert.spv")
             .fragmentShader("Shaders/gbuffer.frag.spv")
             .vertexType<Vertex>()
-            .allShadersBinding(uniformBuffers[0])
+            .allShadersBinding(uniformBuffer)
             .vertexShaderBinding(storageBuffer)
             .fragmentShaderBinding(textureImages)
             .renderTarget(gbufferAlbedoImage)
@@ -201,14 +201,14 @@ private:
         cloudPipeline = graph.graphicsPipeline(rhi)
             .vertexShader("Shaders/cloud.vert.spv")
             .fragmentShader("Shaders/cloud.frag.spv")
-            .fragmentShaderBinding(uniformBuffers[0])
+            .fragmentShaderBinding(uniformBuffer)
             .renderTargetSwapChainColor()
             .build();
  
         lightingPipeline = graph.graphicsPipeline(rhi)
             .vertexShader("Shaders/lighting.vert.spv")
             .fragmentShader("Shaders/lighting.frag.spv")
-            .fragmentShaderBinding(uniformBuffers[0])
+            .fragmentShaderBinding(uniformBuffer)
             .fragmentShaderBinding(storageBuffer)
             .fragmentShaderBinding(gbufferAlbedoImage)
             .fragmentShaderBinding(gbufferNormalImage)
@@ -222,7 +222,7 @@ private:
         postprocPipeline = graph.graphicsPipeline(rhi)
             .vertexShader("Shaders/postproc.vert.spv")
             .fragmentShader("Shaders/postproc.frag.spv")
-            .fragmentShaderBinding(uniformBuffers[0])
+            .fragmentShaderBinding(uniformBuffer)
             .fragmentShaderBinding(postprocImage)
             .renderTargetSwapChainColor()
             .build();
@@ -655,19 +655,15 @@ private:
 	}
 
     void createUniformBuffers() {
-		uniformBuffers.reserve(rhi.getMaxFramesInFlight());
-
         vk::BufferCreateInfo bufferInfo{};
         bufferInfo.size = sizeof(UniformBufferObject);
         bufferInfo.usage = vk::BufferUsageFlagBits::eUniformBuffer;
 
-        for (size_t i = 0; i < rhi.getMaxFramesInFlight(); i++) {
-            auto uniformBuffer = rhi.createBuffer(bufferInfo,
-                vk::MemoryPropertyFlagBits::eHostVisible |
-                vk::MemoryPropertyFlagBits::eHostCoherent);
-            uniformBuffer.map();
-            uniformBuffers.emplace_back(std::move(uniformBuffer));
-        }
+        uniformBuffer = rhi.createBuffer(bufferInfo,
+            vk::MemoryPropertyFlagBits::eHostVisible |
+            vk::MemoryPropertyFlagBits::eHostCoherent);
+
+        uniformBuffer.map();
     }
 
     void createStorageBuffer() {
@@ -720,12 +716,12 @@ private:
 
         std::vector<vk::DescriptorBufferInfo> uboInfos(maxFramesInFlight);
         for (size_t i = 0; i < maxFramesInFlight; i++) {
-            uboInfos[i].buffer = uniformBuffers[i];
+            uboInfos[i].buffer = uniformBuffer.getBuffer(i);
             uboInfos[i].range  = sizeof(UniformBufferObject);
         }
 
         vk::DescriptorBufferInfo ssboInfo{};
-        ssboInfo.buffer = storageBuffer;
+        ssboInfo.buffer = storageBuffer.getBuffer(0);
         ssboInfo.range  = sizeof(instances[0]) * instances.size();
 
         Gfx::DescriptorSetConfig computeConfig{};
@@ -836,7 +832,7 @@ private:
 
         // wait for compute SSBO writes before vertex shader reads them
 		Gfx::RenderPassNode::BufferTransitionInfo particleTransition{};
-		particleTransition.buffers.resize(rhi.getMaxFramesInFlight(), *storageBuffer);
+		particleTransition.buffers.resize(rhi.getMaxFramesInFlight(), storageBuffer.getBuffer(0));
         particleTransition.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
         particleTransition.dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead;
         particleTransition.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
@@ -879,8 +875,8 @@ private:
 
             updateUniformBuffer(imageIndex);
 
-            cmd.bindVertexBuffers(0, *vertexBuffer, { 0 });
-            cmd.bindIndexBuffer(*indexBuffer, 0, vk::IndexType::eUint32);
+            cmd.bindVertexBuffers(0, vertexBuffer.getBuffer(0), {0});
+            cmd.bindIndexBuffer(indexBuffer.getBuffer(0), 0, vk::IndexType::eUint32);
 
             cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
             cmd.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
@@ -904,7 +900,7 @@ private:
 
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, shadowPipeline);
             cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, shadowPipeline.getPipelineLayout(), 0, *shadowDescriptorSets[imageIndex], nullptr);
-            cmd.drawIndexedIndirect(*indirectBuffer, static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand)), drawCmds.size() - 1, static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand)));
+            cmd.drawIndexedIndirect(indirectBuffer.getBuffer(0), static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand)), drawCmds.size() - 1, static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand)));
 
             cmd.endRendering();
         };
@@ -1027,7 +1023,7 @@ private:
 
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, gbufferPipeline);
             cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, gbufferPipeline.getPipelineLayout(), 0, *gbufferDescriptorSets[imageIndex], nullptr);
-            cmd.drawIndexedIndirect(*indirectBuffer, 0, drawCmds.size(), static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand)));
+            cmd.drawIndexedIndirect(indirectBuffer.getBuffer(0), 0, drawCmds.size(), static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand)));
 
             cmd.endRendering();
         };
@@ -1193,7 +1189,7 @@ private:
         ubo.sunColor = glm::vec4(1.0f, 0.95f, 0.85f, 0.0f);
         ubo.ambientColor = glm::vec4(0.3f, 0.5f, 0.8f, 0.0f);
 
-        memcpy(uniformBuffers[currentImage].getMappedData(), &ubo, sizeof(ubo));
+        memcpy(uniformBuffer.getMappedData(currentImage), &ubo, sizeof(ubo));
     }
 
     void drawFrame() {

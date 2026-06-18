@@ -4,11 +4,11 @@
 #include <variant>
 #include <vulkan/vulkan_raii.hpp>
 
+#include "Buffer.hpp"
 #include "Image.hpp"
 
 namespace Gfx
 {
-	class Buffer;
 	class DescriptorSet;
 	class Pipeline;
 

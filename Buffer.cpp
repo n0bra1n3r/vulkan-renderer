@@ -2,18 +2,30 @@
 
 using Gfx::Buffer;
 
-Buffer::Buffer(const vk::BufferCreateInfo& createInfo, vk::raii::Buffer&& buffer, vk::raii::DeviceMemory&& bufferMemory):
+Buffer::Buffer(
+	const vk::BufferCreateInfo& createInfo, 
+	std::vector<vk::raii::Buffer>&& buffers, 
+	std::vector<vk::raii::DeviceMemory>&& bufferMemories):
 	m_createInfo(std::move(createInfo)),
-	m_buffer(std::move(buffer)), 
-	m_bufferMemory(std::move(bufferMemory))
+	m_buffers(std::move(buffers)), 
+	m_bufferMemories(std::move(bufferMemories))
 {
+	m_mappedData.resize(m_buffers.size());
 }
 
-void Buffer::map() {
-	m_mappedData = m_bufferMemory.mapMemory(0, m_createInfo.size);
+void Buffer::map()
+{
+	for (size_t i = 0; i < m_bufferMemories.size(); i++)
+	{
+		m_mappedData[i] = m_bufferMemories[i].mapMemory(0, m_createInfo.size);
+	}
 }
 
-void Buffer::unmap() {
-	m_bufferMemory.unmapMemory();
-	m_mappedData = nullptr;
+void Buffer::unmap()
+{
+	for (size_t i = 0; i < m_bufferMemories.size(); i++)
+	{
+		m_bufferMemories[i].unmapMemory();
+		m_mappedData[i] = nullptr;
+	}
 }

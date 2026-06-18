@@ -21,8 +21,7 @@ namespace Gfx
         Image() = delete;
 
         const vk::ImageCreateInfo& getCreateInfo() const { return m_createInfo; }
-		const vk::ImageView& getImageView(int i) const { return *m_imageViews[i]; }
-        size_t getImageCount() const { return m_images.size(); }
+		const vk::ImageView& getImageView(int index) const { return *m_imageViews[index]; }
         const std::vector<vk::Image>& getImages() const { return m_rawImages; }
 
     private:

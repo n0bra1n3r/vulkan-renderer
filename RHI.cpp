@@ -462,19 +462,36 @@ void RHI::initCommandPool()
 
 Gfx::Buffer RHI::createBuffer(const vk::BufferCreateInfo& bufferInfo, vk::MemoryPropertyFlags memProperties)
 {
-    vk::raii::Buffer buffer(m_device, bufferInfo);
+    auto bufferedCount =
+        (bufferInfo.usage & vk::BufferUsageFlagBits::eUniformBuffer) ?
+        m_maxFramesInFlight :
+        1;
 
-    auto memRequirements = buffer.getMemoryRequirements();
+    std::vector<vk::raii::Buffer> buffers;
+    std::vector<vk::raii::DeviceMemory> bufferMemories;
 
-    vk::MemoryAllocateInfo allocInfo{};
-    allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = findMemoryType(m_physicalDevice, memRequirements.memoryTypeBits, memProperties);
+    buffers.reserve(bufferedCount);
+    bufferMemories.reserve(bufferedCount);
 
-    vk::raii::DeviceMemory bufferMemory(m_device, allocInfo);
+    for (size_t i = 0; i < bufferedCount; i++)
+    {
+        vk::raii::Buffer buffer(m_device, bufferInfo);
 
-    buffer.bindMemory(bufferMemory, 0);
+        auto memRequirements = buffer.getMemoryRequirements();
 
-    return Gfx::Buffer(bufferInfo, std::move(buffer), std::move(bufferMemory));
+        vk::MemoryAllocateInfo allocInfo{};
+        allocInfo.allocationSize = memRequirements.size;
+        allocInfo.memoryTypeIndex = findMemoryType(m_physicalDevice, memRequirements.memoryTypeBits, memProperties);
+
+        vk::raii::DeviceMemory bufferMemory(m_device, allocInfo);
+
+        buffer.bindMemory(bufferMemory, 0);
+
+        buffers.emplace_back(std::move(buffer));
+        bufferMemories.emplace_back(std::move(bufferMemory));
+    }
+
+    return Gfx::Buffer(bufferInfo, std::move(buffers), std::move(bufferMemories));
 }
 
 Gfx::Buffer RHI::createBuffer(const vk::BufferCreateInfo& bufferInfo, const void* contentData, size_t contentSize, vk::MemoryPropertyFlags memProperties)
@@ -495,7 +512,7 @@ void RHI::updateBuffer(const Buffer& buffer, const void* contentData, size_t con
         vk::MemoryPropertyFlagBits::eHostCoherent);
 
     stagingBuffer.map();
-    memcpy(stagingBuffer.getMappedData(), contentData, stagingInfo.size);
+    memcpy(stagingBuffer.getMappedData(0), contentData, stagingInfo.size);
     stagingBuffer.unmap();
 
     vk::CommandBufferAllocateInfo allocInfo{};
@@ -507,7 +524,10 @@ void RHI::updateBuffer(const Buffer& buffer, const void* contentData, size_t con
     commandCopyBuffer.begin({ vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
     vk::BufferCopy region{};
     region.size = stagingInfo.size;
-    commandCopyBuffer.copyBuffer(stagingBuffer, buffer, region);
+    for (size_t i = 0; i < buffer.getBufferCount(); i++)
+    {
+        commandCopyBuffer.copyBuffer(stagingBuffer.getBuffer(0), buffer.getBuffer(i), region);
+    }
     commandCopyBuffer.end();
 
     vk::SubmitInfo submitInfo{};
@@ -582,7 +602,7 @@ void RHI::updateImage(const Gfx::Image& image, const void* contentData, size_t c
         vk::MemoryPropertyFlagBits::eHostCoherent);
 
     stagingBuffer.map();
-    memcpy(stagingBuffer.getMappedData(), contentData, stagingInfo.size);
+    memcpy(stagingBuffer.getMappedData(0), contentData, stagingInfo.size);
     stagingBuffer.unmap();
 
     vk::CommandBufferAllocateInfo allocInfo{};
@@ -598,7 +618,7 @@ void RHI::updateImage(const Gfx::Image& image, const void* contentData, size_t c
     for (const auto& rawImage : image.getImages())
     {
         transitionImageLayout(commandCopyBuffer, rawImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
-        commandCopyBuffer.copyBufferToImage(stagingBuffer, rawImage, vk::ImageLayout::eTransferDstOptimal, {region});
+        commandCopyBuffer.copyBufferToImage(stagingBuffer.getBuffer(0), rawImage, vk::ImageLayout::eTransferDstOptimal, {region});
         transitionImageLayout(commandCopyBuffer, rawImage, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
     }
     commandCopyBuffer.end();
