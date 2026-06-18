@@ -24,9 +24,147 @@
 #include <functional>
 
 #include "RHI.hpp"
+#include "Pipeline.hpp"
+#include "Image.hpp"
+#include "Buffer.hpp"
 
 namespace Gfx
 {
+    struct GraphicsPipelineBuilder
+    {
+        GraphicsPipelineBuilder(RHI& rhi) : m_rhi(rhi) {}
+
+        GraphicsPipelineBuilder& vertexShader(std::string name)
+        {
+            pipelineCreateInfo.shaders.emplace_back(name, vk::ShaderStageFlagBits::eVertex);
+            return *this;
+        }
+
+        template<typename T>
+        GraphicsPipelineBuilder& vertexType()
+        {
+            pipelineCreateInfo.vertexInputBinding = T::getBindingDescription();
+            pipelineCreateInfo.vertexInputAttributes = T::getAttributeDescriptions();
+            return *this;
+        }
+
+        GraphicsPipelineBuilder& fragmentShader(std::string name)
+        {
+            pipelineCreateInfo.shaders.emplace_back(name, vk::ShaderStageFlagBits::eFragment);
+            return *this;
+        }
+
+        GraphicsPipelineBuilder shaderBinding(const Image& image, vk::ShaderStageFlagBits stage, bool hasSampler = true)
+        {
+            auto index = static_cast<uint32_t>(pipelineCreateInfo.descriptorSetLayoutBindings.size());
+            auto descriptorType =
+                hasSampler ?
+                vk::DescriptorType::eCombinedImageSampler :
+                vk::DescriptorType::eSampledImage;
+            pipelineCreateInfo.descriptorSetLayoutBindings.emplace_back(
+                index,
+                descriptorType,
+                1,
+                stage,
+                nullptr);
+            return *this;
+        }
+
+        GraphicsPipelineBuilder shaderBinding(const std::vector<Image>& images, vk::ShaderStageFlagBits stage, bool hasSampler = true)
+        {
+            auto index = static_cast<uint32_t>(pipelineCreateInfo.descriptorSetLayoutBindings.size());
+            auto descriptorType =
+                hasSampler ? 
+                vk::DescriptorType::eCombinedImageSampler : 
+                vk::DescriptorType::eSampledImage;
+            pipelineCreateInfo.descriptorSetLayoutBindings.emplace_back(
+                index,
+                descriptorType,
+                static_cast<uint32_t>(images.size()),
+                stage, 
+                nullptr);
+            return *this;
+        }
+
+        GraphicsPipelineBuilder shaderBinding(const Buffer& buffer, vk::ShaderStageFlagBits stage)
+        {
+            auto index = static_cast<uint32_t>(pipelineCreateInfo.descriptorSetLayoutBindings.size());
+            const auto& createInfo = buffer.getCreateInfo();
+            auto descriptorType =
+                (createInfo.usage & vk::BufferUsageFlagBits::eStorageBuffer) ?
+                vk::DescriptorType::eStorageBuffer :
+                vk::DescriptorType::eUniformBuffer;
+            pipelineCreateInfo.descriptorSetLayoutBindings.emplace_back(
+                index,
+                descriptorType,
+                1,
+                stage,
+                nullptr);
+            return *this;
+        }
+
+        GraphicsPipelineBuilder vertexShaderBinding(const Buffer& buffer)
+        {
+            return shaderBinding(buffer, vk::ShaderStageFlagBits::eVertex);
+        }
+
+        GraphicsPipelineBuilder fragmentShaderBinding(const Buffer& buffer)
+        {
+            return shaderBinding(buffer, vk::ShaderStageFlagBits::eFragment);
+        }
+
+        GraphicsPipelineBuilder fragmentShaderBinding(const Image& image, bool hasSampler = true)
+        {
+            return shaderBinding(image, vk::ShaderStageFlagBits::eFragment, hasSampler);
+        }
+
+        GraphicsPipelineBuilder fragmentShaderBinding(const std::vector<Image>& images, bool hasSampler = true)
+        {
+            return shaderBinding(images, vk::ShaderStageFlagBits::eFragment, hasSampler);
+        }
+
+        GraphicsPipelineBuilder allShadersBinding(const Buffer& buffer)
+        {
+            return shaderBinding(buffer, vk::ShaderStageFlagBits::eAllGraphics);
+        }
+
+        GraphicsPipelineBuilder renderTarget(const Image& image)
+        {
+            const auto& createInfo = image.getCreateInfo();
+ 
+            if (createInfo.usage & vk::ImageUsageFlagBits::eColorAttachment)
+            {
+                pipelineCreateInfo.colorAttachments.emplace_back(createInfo.format);
+            }
+            else
+            {
+                pipelineCreateInfo.depthAttachment = createInfo.format;
+            }
+            return *this;
+        }
+
+        GraphicsPipelineBuilder renderTargetSwapChainColor()
+        {
+            pipelineCreateInfo.colorAttachments.emplace_back(m_rhi.getSurfaceFormat());
+            return *this;
+        }
+
+        GraphicsPipelineBuilder renderTargetSwapChainDepth()
+        {
+            pipelineCreateInfo.depthAttachment = m_rhi.getDepthFormat();
+            return *this;
+        }
+
+        Pipeline build()
+        {
+            return m_rhi.createGraphicsPipeline(pipelineCreateInfo);
+        }
+
+    private:
+        RHI& m_rhi;
+        GraphicsPipelineCreateInfo pipelineCreateInfo;
+    };
+
     struct RenderPassNode
     {
         // Human-readable name (for students / debugging)
@@ -87,6 +225,11 @@ namespace Gfx
         // and the classic SubmitInfo with semaphores and a fence. Image transitions inside passes
         // use pipelineBarrier2 (ImageMemoryBarrier2 + DependencyInfo).
         void executeFrame();
+
+        GraphicsPipelineBuilder buildGraphicsPipeline(RHI& rhi)
+        {
+            return GraphicsPipelineBuilder(rhi);
+        }
 
     private:
 		const RHI& m_rhi;

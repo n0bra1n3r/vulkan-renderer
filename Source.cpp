@@ -159,12 +159,6 @@ private:
         loadFloor();
         loadModel();
 
-		createParticlePipeline();
-        createShadowPipeline();
-        createGBufferPipeline();
-        createCloudPipeline();
-        createLightingPipeline();
-        createPostprocPipeline();
 		createTextureResources();
 		createShadowResources();
 		createGBufferResources();
@@ -174,6 +168,12 @@ private:
         createIndirectBuffer();
         createUniformBuffers();
         createStorageBuffer();
+        createParticlePipeline();
+        createShadowPipeline();
+        createGBufferPipeline();
+        createCloudPipeline();
+        createLightingPipeline();
+        createPostprocPipeline();
         createDescriptorSets();
 
         initRenderGraph();
@@ -197,94 +197,65 @@ private:
     }
 
     void createShadowPipeline() {
-        Gfx::GraphicsPipelineCreateInfo pipelineCreateInfo{};
-        pipelineCreateInfo.shaders = {
-            { "Shaders/shadow.vert.spv", vk::ShaderStageFlagBits::eVertex },
-            { "Shaders/shadow.frag.spv", vk::ShaderStageFlagBits::eFragment },
-        };
-        pipelineCreateInfo.vertexInputBindings = { Vertex::getBindingDescription() };
-        pipelineCreateInfo.vertexInputAttributes = Vertex::getAttributeDescriptions();
-        pipelineCreateInfo.descriptorSetLayoutBindings = {
-            { 0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr },
-            { 1, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr },
-        };
-        pipelineCreateInfo.depthAttachment = { rhi.getDepthFormat() };
-
-        shadowPipeline = rhi.createGraphicsPipeline(pipelineCreateInfo);
+        shadowPipeline = graph.buildGraphicsPipeline(rhi)
+            .vertexShader("Shaders/shadow.vert.spv")
+            .fragmentShader("Shaders/shadow.frag.spv")
+            .vertexType<Vertex>()
+            .vertexShaderBinding(uniformBuffers[0])
+            .vertexShaderBinding(storageBuffer)
+            .renderTargetSwapChainDepth()
+            .build();
     }
 
     void createGBufferPipeline() {
-        Gfx::GraphicsPipelineCreateInfo pipelineCreateInfo{};
-        pipelineCreateInfo.shaders = {
-            { "Shaders/gbuffer.vert.spv", vk::ShaderStageFlagBits::eVertex },
-            { "Shaders/gbuffer.frag.spv", vk::ShaderStageFlagBits::eFragment },
-        };
-        pipelineCreateInfo.vertexInputBindings = { Vertex::getBindingDescription() };
-        pipelineCreateInfo.vertexInputAttributes = Vertex::getAttributeDescriptions();
-        pipelineCreateInfo.descriptorSetLayoutBindings = {
-            { 0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eAllGraphics, nullptr },
-            { 1, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr },
-            { 2, vk::DescriptorType::eCombinedImageSampler, static_cast<uint32_t>(textures.size()), vk::ShaderStageFlagBits::eFragment, nullptr },
-		};
-        pipelineCreateInfo.colorAttachments = {
-            { rhi.getSurfaceFormat() },
-            { vk::Format::eR16G16B16A16Sfloat },
-            { vk::Format::eR32G32B32A32Sfloat },
-            { vk::Format::eR32Uint },
-        };
-        pipelineCreateInfo.depthAttachment = { rhi.getDepthFormat() };
-
-        gbufferPipeline = rhi.createGraphicsPipeline(pipelineCreateInfo);
+        gbufferPipeline = graph.buildGraphicsPipeline(rhi)
+            .vertexShader("Shaders/gbuffer.vert.spv")
+            .fragmentShader("Shaders/gbuffer.frag.spv")
+            .vertexType<Vertex>()
+            .allShadersBinding(uniformBuffers[0])
+            .vertexShaderBinding(storageBuffer)
+            .fragmentShaderBinding(textureImages)
+            .renderTarget(gbufferAlbedoImages[0])
+            .renderTarget(gbufferNormalImages[0])
+            .renderTarget(gbufferPositionImages[0])
+            .renderTarget(gbufferInstanceIDImages[0])
+            .renderTargetSwapChainDepth()
+            .build();
     }
 
     void createCloudPipeline() {
-        Gfx::GraphicsPipelineCreateInfo pipelineCreateInfo{};
-        pipelineCreateInfo.shaders = {
-            { "Shaders/cloud.vert.spv", vk::ShaderStageFlagBits::eVertex },
-            { "Shaders/cloud.frag.spv", vk::ShaderStageFlagBits::eFragment },
-        }  ;
-        pipelineCreateInfo.descriptorSetLayoutBindings = {
-            { 0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eFragment, nullptr },
-        };
-        pipelineCreateInfo.colorAttachments = { { rhi.getSurfaceFormat() } };
-
-        cloudPipeline = rhi.createGraphicsPipeline(pipelineCreateInfo);
+        cloudPipeline = graph.buildGraphicsPipeline(rhi)
+            .vertexShader("Shaders/cloud.vert.spv")
+            .fragmentShader("Shaders/cloud.frag.spv")
+            .fragmentShaderBinding(uniformBuffers[0])
+            .renderTargetSwapChainColor()
+            .build();
     }
 
     void createLightingPipeline() {
-        Gfx::GraphicsPipelineCreateInfo pipelineCreateInfo{};
-        pipelineCreateInfo.shaders = {
-            { "Shaders/lighting.vert.spv", vk::ShaderStageFlagBits::eVertex },
-            { "Shaders/lighting.frag.spv", vk::ShaderStageFlagBits::eFragment },
-        };
-        pipelineCreateInfo.descriptorSetLayoutBindings = {
-            { 0, vk::DescriptorType::eUniformBuffer,        1, vk::ShaderStageFlagBits::eFragment, nullptr },
-            { 1, vk::DescriptorType::eStorageBuffer,        1, vk::ShaderStageFlagBits::eFragment, nullptr },
-            { 2, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr },
-            { 3, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr },
-            { 4, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr },
-            { 5, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr },
-            { 6, vk::DescriptorType::eSampledImage, 1, vk::ShaderStageFlagBits::eFragment, nullptr },
-		};
-        pipelineCreateInfo.colorAttachments = { { rhi.getSurfaceFormat() } };
-        pipelineCreateInfo.depthAttachment = { rhi.getDepthFormat() };
-
-        lightingPipeline = rhi.createGraphicsPipeline(pipelineCreateInfo);
+        lightingPipeline = graph.buildGraphicsPipeline(rhi)
+            .vertexShader("Shaders/lighting.vert.spv")
+            .fragmentShader("Shaders/lighting.frag.spv")
+            .fragmentShaderBinding(uniformBuffers[0])
+            .fragmentShaderBinding(storageBuffer)
+            .fragmentShaderBinding(gbufferAlbedoImages[0])
+            .fragmentShaderBinding(gbufferNormalImages[0])
+            .fragmentShaderBinding(gbufferPositionImages[0])
+            .fragmentShaderBinding(shadowImages[0])
+            .fragmentShaderBinding(gbufferInstanceIDImages[0], false)
+            .renderTargetSwapChainColor()
+            .renderTargetSwapChainDepth()
+            .build();
     }
 
     void createPostprocPipeline() {
-        Gfx::GraphicsPipelineCreateInfo pipelineCreateInfo{};
-        pipelineCreateInfo.shaders = {
-            { "Shaders/postproc.vert.spv", vk::ShaderStageFlagBits::eVertex },
-            { "Shaders/postproc.frag.spv", vk::ShaderStageFlagBits::eFragment },
-        };
-        pipelineCreateInfo.descriptorSetLayoutBindings = {
-            { 0, vk::DescriptorType::eUniformBuffer,        1, vk::ShaderStageFlagBits::eFragment, nullptr },
-            { 1, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr },
-        };
-        pipelineCreateInfo.colorAttachments = { { rhi.getSurfaceFormat() } };
-
-        postprocPipeline = rhi.createGraphicsPipeline(pipelineCreateInfo);
+        postprocPipeline = graph.buildGraphicsPipeline(rhi)
+            .vertexShader("Shaders/postproc.vert.spv")
+            .fragmentShader("Shaders/postproc.frag.spv")
+            .fragmentShaderBinding(uniformBuffers[0])
+            .fragmentShaderBinding(postprocImages[0])
+            .renderTargetSwapChainColor()
+            .build();
     }
 
     std::vector<Vertex> generateSphere(uint32_t latSegments = 8, uint32_t lonSegments = 8)

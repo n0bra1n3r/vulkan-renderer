@@ -483,7 +483,7 @@ Gfx::Buffer RHI::createBuffer(const vk::BufferCreateInfo& bufferInfo, vk::Memory
 
     buffer.bindMemory(bufferMemory, 0);
 
-    return Gfx::Buffer(std::move(buffer), std::move(bufferMemory), bufferInfo.size);
+    return Gfx::Buffer(bufferInfo, std::move(buffer), std::move(bufferMemory));
 }
 
 Gfx::Buffer RHI::createBuffer(const vk::BufferCreateInfo& bufferInfo, const void* contentData, size_t contentSize, vk::MemoryPropertyFlags memProperties)
@@ -528,7 +528,7 @@ void RHI::updateBuffer(const Buffer& buffer, const void* contentData, size_t con
     m_graphicsQueue.waitIdle();
 }
 
-Gfx::Image RHI::createImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryPropertyFlags properties)
+Gfx::Image RHI::createImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryPropertyFlags memProperties)
 {
     vk::raii::Image image(m_device, imageInfo);
 
@@ -536,7 +536,7 @@ Gfx::Image RHI::createImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryProp
 
     vk::MemoryAllocateInfo allocInfo{};
     allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = findMemoryType(m_physicalDevice, memRequirements.memoryTypeBits, properties);
+    allocInfo.memoryTypeIndex = findMemoryType(m_physicalDevice, memRequirements.memoryTypeBits, memProperties);
 
     vk::raii::DeviceMemory imageMemory(m_device, allocInfo);
 
@@ -555,7 +555,7 @@ Gfx::Image RHI::createImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryProp
 
     vk::raii::ImageView imageView(m_device, viewInfo);
 
-    return Gfx::Image(std::move(image), std::move(imageMemory), std::move(imageView), imageInfo.extent, imageInfo.format);
+    return Gfx::Image(imageInfo, std::move(image), std::move(imageMemory), std::move(imageView));
 }
 
 void RHI::updateImage(const Gfx::Image& image, const void* contentData, size_t contentSize)
@@ -582,9 +582,7 @@ void RHI::updateImage(const Gfx::Image& image, const void* contentData, size_t c
     transitionImageLayout(commandCopyBuffer, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
     vk::BufferImageCopy region{};
     region.imageSubresource = { vk::ImageAspectFlagBits::eColor, 0, 0, 1 };
-    region.imageExtent.width = image.m_extent.width;
-    region.imageExtent.height = image.m_extent.height;
-    region.imageExtent.depth = image.m_extent.depth;
+    region.imageExtent = image.m_createInfo.extent;
     commandCopyBuffer.copyBufferToImage(stagingBuffer, image, vk::ImageLayout::eTransferDstOptimal, { region });
     transitionImageLayout(commandCopyBuffer, image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
     commandCopyBuffer.end();
@@ -692,8 +690,8 @@ Gfx::Pipeline RHI::createGraphicsPipeline(const Gfx::GraphicsPipelineCreateInfo&
     depthStencil.depthCompareOp = vk::CompareOp::eLess;
 
     vk::PipelineVertexInputStateCreateInfo vertexInputInfo{};
-    vertexInputInfo.vertexBindingDescriptionCount = static_cast<uint32_t>(createInfo.vertexInputBindings.size());
-    vertexInputInfo.pVertexBindingDescriptions = createInfo.vertexInputBindings.data();
+    vertexInputInfo.vertexBindingDescriptionCount = 1;
+    vertexInputInfo.pVertexBindingDescriptions = &createInfo.vertexInputBinding;
     vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(createInfo.vertexInputAttributes.size());
     vertexInputInfo.pVertexAttributeDescriptions = createInfo.vertexInputAttributes.data();
 

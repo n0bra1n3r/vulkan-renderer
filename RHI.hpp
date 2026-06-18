@@ -14,7 +14,7 @@ namespace Gfx
 	struct GraphicsPipelineCreateInfo
 	{
 		std::vector<std::pair<std::string, vk::ShaderStageFlagBits>> shaders;
-		std::vector<vk::VertexInputBindingDescription> vertexInputBindings;
+		vk::VertexInputBindingDescription vertexInputBinding;
 		std::vector<vk::VertexInputAttributeDescription> vertexInputAttributes;
 		std::vector<vk::DescriptorSetLayoutBinding> descriptorSetLayoutBindings;
 		std::vector<vk::Format> colorAttachments;
@@ -68,7 +68,7 @@ namespace Gfx
 		Buffer createBuffer(const vk::BufferCreateInfo& bufferInfo, const void* contentData, size_t contentSize, vk::MemoryPropertyFlags memProperties = vk::MemoryPropertyFlagBits::eDeviceLocal);
 		void updateBuffer(const Buffer& buffer, const void* contentData, size_t contentSize);
 
-		Image createImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryPropertyFlags properties = vk::MemoryPropertyFlagBits::eDeviceLocal);
+		Image createImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryPropertyFlags memProperties = vk::MemoryPropertyFlagBits::eDeviceLocal);
 		void updateImage(const Gfx::Image& image, const void* contentData, size_t contentSize);
 
 		Pipeline createGraphicsPipeline(const GraphicsPipelineCreateInfo& createInfo);
