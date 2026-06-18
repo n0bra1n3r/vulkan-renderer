@@ -785,23 +785,20 @@ private:
             postprocImageInfos[i]    = { colorInfo };
         }
 
-        std::vector<vk::DescriptorImageInfo> albedoImageInfos{};
-        std::vector<vk::DescriptorImageInfo> normalImageInfos{};
-        std::vector<vk::DescriptorImageInfo> positionImageInfos{};
+        std::vector<std::vector<vk::DescriptorImageInfo>> albedoImageInfos(maxFramesInFlight);
+        std::vector<std::vector<vk::DescriptorImageInfo>> normalImageInfos(maxFramesInFlight);
+        std::vector<std::vector<vk::DescriptorImageInfo>> positionImageInfos(maxFramesInFlight);
         std::vector<std::vector<vk::DescriptorImageInfo>> instanceIDImageInfos(maxFramesInFlight);
-        albedoImageInfos.reserve(maxFramesInFlight);
-        normalImageInfos.reserve(maxFramesInFlight);
-        positionImageInfos.reserve(maxFramesInFlight);
         for (size_t i = 0; i < maxFramesInFlight; i++) {
             vk::DescriptorImageInfo imageInfo{};
             imageInfo.sampler = gbufferSampler;
             imageInfo.imageView = gbufferAlbedoImages[i].getImageView();
             imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-            albedoImageInfos.emplace_back(imageInfo);
+            albedoImageInfos[i] = { imageInfo };
             imageInfo.imageView = gbufferNormalImages[i].getImageView();
-            normalImageInfos.emplace_back(imageInfo);
+            normalImageInfos[i] = { imageInfo };
             imageInfo.imageView = gbufferPositionImages[i].getImageView();
-            positionImageInfos.emplace_back(imageInfo);
+            positionImageInfos[i] = { imageInfo };
             imageInfo.imageView = gbufferInstanceIDImages[i].getImageView();
             instanceIDImageInfos[i] = { imageInfo };
         }
@@ -820,9 +817,9 @@ private:
         lightingConfig.bindings = {
             { vk::DescriptorType::eUniformBuffer, std::vector<vk::DescriptorBufferInfo>(uboInfos) },
             { vk::DescriptorType::eStorageBuffer, std::vector<vk::DescriptorBufferInfo>{ ssboInfo } },
-            { vk::DescriptorType::eCombinedImageSampler, std::vector<std::vector<vk::DescriptorImageInfo>>{ albedoImageInfos } },
-            { vk::DescriptorType::eCombinedImageSampler, std::vector<std::vector<vk::DescriptorImageInfo>>{ normalImageInfos } },
-            { vk::DescriptorType::eCombinedImageSampler, std::vector<std::vector<vk::DescriptorImageInfo>>{ positionImageInfos } },
+            { vk::DescriptorType::eCombinedImageSampler, std::vector<std::vector<vk::DescriptorImageInfo>>(albedoImageInfos) },
+            { vk::DescriptorType::eCombinedImageSampler, std::vector<std::vector<vk::DescriptorImageInfo>>(normalImageInfos) },
+            { vk::DescriptorType::eCombinedImageSampler, std::vector<std::vector<vk::DescriptorImageInfo>>(positionImageInfos) },
             { vk::DescriptorType::eCombinedImageSampler, std::vector<std::vector<vk::DescriptorImageInfo>>(shadowImageInfos) },
             { vk::DescriptorType::eSampledImage, std::vector<std::vector<vk::DescriptorImageInfo>>(instanceIDImageInfos) },
         };
