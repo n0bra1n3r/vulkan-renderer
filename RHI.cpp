@@ -448,11 +448,7 @@ void RHI::initDepthResources()
     depthImageInfo.arrayLayers = 1;
     depthImageInfo.usage = vk::ImageUsageFlagBits::eDepthStencilAttachment;
 
-    for (size_t i = 0; i < m_maxFramesInFlight; i++) {
-        auto depthImage = createImage(depthImageInfo);
-        m_depthImageObjs.emplace_back(*depthImage);
-        m_depthImages.emplace_back(std::move(depthImage));
-    }
+    m_depthImage = createImage(depthImageInfo);
 }
 
 void RHI::initCommandPool()
@@ -462,11 +458,6 @@ void RHI::initCommandPool()
     poolInfo.queueFamilyIndex = m_graphicsFamily;
 
     m_commandPool = vk::raii::CommandPool(m_device, poolInfo);
-}
-
-const vk::raii::ImageView& RHI::getDepthImageView(int index) const
-{
-    return m_depthImages[index].getImageView();
 }
 
 Gfx::Buffer RHI::createBuffer(const vk::BufferCreateInfo& bufferInfo, vk::MemoryPropertyFlags memProperties)
@@ -530,32 +521,54 @@ void RHI::updateBuffer(const Buffer& buffer, const void* contentData, size_t con
 
 Gfx::Image RHI::createImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryPropertyFlags memProperties)
 {
-    vk::raii::Image image(m_device, imageInfo);
+    auto bufferedCount =
+        imageInfo.usage & (
+            vk::ImageUsageFlagBits::eColorAttachment | 
+            vk::ImageUsageFlagBits::eDepthStencilAttachment) ?
+        m_maxFramesInFlight :
+        1;
 
-    auto memRequirements = image.getMemoryRequirements();
+    std::vector<vk::raii::Image> images;
+    std::vector<vk::raii::DeviceMemory> imageMemories;
+    std::vector<vk::raii::ImageView> imageViews;
 
-    vk::MemoryAllocateInfo allocInfo{};
-    allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = findMemoryType(m_physicalDevice, memRequirements.memoryTypeBits, memProperties);
+    images.reserve(bufferedCount);
+    imageMemories.reserve(bufferedCount);
+    imageViews.reserve(bufferedCount);
 
-    vk::raii::DeviceMemory imageMemory(m_device, allocInfo);
+    for (size_t i = 0; i < bufferedCount; i++)
+    {
+        vk::raii::Image image(m_device, imageInfo);
 
-    image.bindMemory(imageMemory, 0);
+        auto memRequirements = image.getMemoryRequirements();
 
-    vk::ImageViewCreateInfo viewInfo{};
-    viewInfo.image = image;
-    viewInfo.viewType = vk::ImageViewType::e2D;
-    viewInfo.format = imageInfo.format;
-    viewInfo.subresourceRange.aspectMask =
-        imageInfo.usage & vk::ImageUsageFlagBits::eDepthStencilAttachment
-        ? vk::ImageAspectFlagBits::eDepth
-        : vk::ImageAspectFlagBits::eColor;
-    viewInfo.subresourceRange.levelCount = 1;
-    viewInfo.subresourceRange.layerCount = 1;
+        vk::MemoryAllocateInfo allocInfo{};
+        allocInfo.allocationSize = memRequirements.size;
+        allocInfo.memoryTypeIndex = findMemoryType(m_physicalDevice, memRequirements.memoryTypeBits, memProperties);
 
-    vk::raii::ImageView imageView(m_device, viewInfo);
+        vk::raii::DeviceMemory imageMemory(m_device, allocInfo);
 
-    return Gfx::Image(imageInfo, std::move(image), std::move(imageMemory), std::move(imageView));
+        image.bindMemory(imageMemory, 0);
+
+        vk::ImageViewCreateInfo viewInfo{};
+        viewInfo.image = image;
+        viewInfo.viewType = vk::ImageViewType::e2D;
+        viewInfo.format = imageInfo.format;
+        viewInfo.subresourceRange.aspectMask =
+            (imageInfo.usage & vk::ImageUsageFlagBits::eDepthStencilAttachment) ? 
+            vk::ImageAspectFlagBits::eDepth: 
+            vk::ImageAspectFlagBits::eColor;
+        viewInfo.subresourceRange.levelCount = 1;
+        viewInfo.subresourceRange.layerCount = 1;
+
+        vk::raii::ImageView imageView(m_device, viewInfo);
+
+        images.emplace_back(std::move(image));
+        imageMemories.emplace_back(std::move(imageMemory));
+        imageViews.emplace_back(std::move(imageView));
+    }
+
+    return Gfx::Image(imageInfo, std::move(images), std::move(imageMemories), std::move(imageViews));
 }
 
 void RHI::updateImage(const Gfx::Image& image, const void* contentData, size_t contentSize)
@@ -579,12 +592,15 @@ void RHI::updateImage(const Gfx::Image& image, const void* contentData, size_t c
 
     auto commandCopyBuffer = std::move(m_device.allocateCommandBuffers(allocInfo).front());
     commandCopyBuffer.begin({ vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
-    transitionImageLayout(commandCopyBuffer, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
     vk::BufferImageCopy region{};
     region.imageSubresource = { vk::ImageAspectFlagBits::eColor, 0, 0, 1 };
     region.imageExtent = image.m_createInfo.extent;
-    commandCopyBuffer.copyBufferToImage(stagingBuffer, image, vk::ImageLayout::eTransferDstOptimal, { region });
-    transitionImageLayout(commandCopyBuffer, image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+    for (const auto& rawImage : image.getImages())
+    {
+        transitionImageLayout(commandCopyBuffer, rawImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
+        commandCopyBuffer.copyBufferToImage(stagingBuffer, rawImage, vk::ImageLayout::eTransferDstOptimal, {region});
+        transitionImageLayout(commandCopyBuffer, rawImage, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+    }
     commandCopyBuffer.end();
 
     vk::SubmitInfo submitInfo{};

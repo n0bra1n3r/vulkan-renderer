@@ -4,11 +4,12 @@
 #include <variant>
 #include <vulkan/vulkan_raii.hpp>
 
+#include "Image.hpp"
+
 namespace Gfx
 {
 	class Buffer;
 	class DescriptorSet;
-	class Image;
 	class Pipeline;
 
 	struct GraphicsPipelineCreateInfo
@@ -57,9 +58,9 @@ namespace Gfx
 		vk::Format getSurfaceFormat() const { return m_surfaceFormat.format; }
 		vk::Format getDepthFormat() const { return m_depthFormat; }
 		std::vector<vk::Image> getSwapChainImages() const { return m_swapChain.getImages(); }
-		std::vector<vk::Image> getDepthImages() const { return m_depthImageObjs; }
-		const vk::raii::ImageView& getSwapChainImageView(int index) const { return m_swapChainImageViews[index]; }
-		const vk::raii::ImageView& getDepthImageView(int index) const;
+		std::vector<vk::Image> getDepthImages() const { return m_depthImage.getImages(); }
+		const vk::ImageView& getSwapChainImageView(int index) const { return *m_swapChainImageViews[index]; }
+		const vk::ImageView& getDepthImageView(int index) const { return m_depthImage.getImageView(index); }
 		vk::Extent2D getSwapChainExtent() const { return m_swapChainExtent; }
 
 		std::pair<vk::Result, uint32_t> acquireNextSwapChainImage(const vk::Semaphore& signal) const { return m_swapChain.acquireNextImage(UINT64_MAX, signal, nullptr); }
@@ -136,8 +137,7 @@ namespace Gfx
 		uint8_t m_maxFramesInFlight = 0;
 		std::vector<vk::raii::ImageView> m_swapChainImageViews{};
 		vk::Format m_depthFormat{};
-		std::vector<Gfx::Image> m_depthImages{};
-		std::vector<vk::Image> m_depthImageObjs{};
+		Gfx::Image m_depthImage = nullptr;
 		vk::raii::CommandPool m_commandPool = nullptr;
 	};
 }
