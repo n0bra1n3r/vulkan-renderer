@@ -31,4 +31,24 @@ namespace Gfx
         std::vector<vk::raii::ImageView> m_imageViews;
         std::vector<vk::Image> m_rawImages;
     };
+
+    class Sampler
+    {
+    private:
+        friend class RHI;
+
+        Sampler(const vk::SamplerCreateInfo& createInfo, vk::raii::Sampler&& sampler);
+
+    public:
+        Sampler(nullptr_t) : m_sampler(nullptr) {}
+
+        Sampler() = delete;
+
+        const vk::SamplerCreateInfo& getCreateInfo() const { return m_createInfo; }
+        const vk::Sampler& getSampler() const { return *m_sampler; }
+
+    private:
+        vk::SamplerCreateInfo m_createInfo;
+        vk::raii::Sampler m_sampler;
+    };
 }

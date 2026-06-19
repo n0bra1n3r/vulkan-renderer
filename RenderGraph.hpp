@@ -30,193 +30,282 @@
 
 namespace Gfx
 {
-    struct ComputePipelineBuilder
+    template<typename PipelineCreateInfo>
+    class PipelineBuilder
     {
-        ComputePipelineBuilder(RHI& rhi) : m_rhi(rhi) {}
-
-        ComputePipelineBuilder& shader(std::string name)
-        {
-            pipelineCreateInfo.shader = name;
-            return *this;
-        }
-
-        ComputePipelineBuilder shaderBinding(const Buffer& buffer)
-        {
-            auto index = static_cast<uint32_t>(pipelineCreateInfo.descriptorSetLayoutBindings.size());
-            const auto& createInfo = buffer.getCreateInfo();
-            auto descriptorType =
-                (createInfo.usage & vk::BufferUsageFlagBits::eStorageBuffer) ?
-                vk::DescriptorType::eStorageBuffer :
-                vk::DescriptorType::eUniformBuffer;
-            pipelineCreateInfo.descriptorSetLayoutBindings.emplace_back(
-                index,
-                descriptorType,
-                1,
-                vk::ShaderStageFlagBits::eCompute,
-                nullptr);
-            return *this;
-        }
-
-        ComputePipelineBuilder shaderVariable(const Buffer& buffer)
-        {
-            auto index = static_cast<uint32_t>(pipelineCreateInfo.descriptorSetLayoutBindings.size());
-            const auto& createInfo = buffer.getCreateInfo();
-            auto descriptorType =
-                (createInfo.usage & vk::BufferUsageFlagBits::eStorageBuffer) ?
-                vk::DescriptorType::eStorageBuffer :
-                vk::DescriptorType::eUniformBuffer;
-            pipelineCreateInfo.descriptorSetLayoutBindings.emplace_back(
-                index,
-                descriptorType,
-                1,
-                vk::ShaderStageFlagBits::eCompute,
-                nullptr);
-            return *this;
-        }
+    public:
+        PipelineBuilder(RHI& rhi) : m_rhi(rhi) {}
 
         Pipeline build()
         {
-            return m_rhi.createComputePipeline(pipelineCreateInfo);
+            auto pipeline = m_rhi.createPipeline(m_pipelineCreateInfo);
+            m_descriptorSetConfig.layout = pipeline.getDescriptorSetLayout();
+            return std::move(pipeline);
         }
 
-    private:
+        const DescriptorSetConfig& getDescriptorSetConfig() const
+        {
+            return m_descriptorSetConfig;
+        }
+
+    protected:
         RHI& m_rhi;
-        ComputePipelineCreateInfo pipelineCreateInfo;
+        PipelineCreateInfo m_pipelineCreateInfo;
+        DescriptorSetConfig m_descriptorSetConfig;
     };
 
-    struct GraphicsPipelineBuilder
+    class ComputePipelineBuilder : public PipelineBuilder<ComputePipelineCreateInfo>
     {
-        GraphicsPipelineBuilder(RHI& rhi) : m_rhi(rhi) {}
+    public:
+        using PipelineBuilder::PipelineBuilder;
+
+        ComputePipelineBuilder& shader(std::string name)
+        {
+            m_pipelineCreateInfo.shader = name;
+            return *this;
+        }
+
+        ComputePipelineBuilder& shaderBinding(const Buffer& buffer)
+        {
+            auto index = static_cast<uint32_t>(m_pipelineCreateInfo.descriptorSetLayoutBindings.size());
+            const auto& createInfo = buffer.getCreateInfo();
+
+            auto descriptorType =
+                (createInfo.usage & vk::BufferUsageFlagBits::eStorageBuffer) ?
+                vk::DescriptorType::eStorageBuffer :
+                vk::DescriptorType::eUniformBuffer;
+
+            m_pipelineCreateInfo.descriptorSetLayoutBindings.emplace_back(
+                index,
+                descriptorType,
+                1,
+                vk::ShaderStageFlagBits::eCompute,
+                nullptr);
+
+            DescriptorBinding descriptorBinding{};
+
+            std::vector<vk::DescriptorBufferInfo> resourceInfos{};
+
+            if (descriptorType == vk::DescriptorType::eUniformBuffer)
+            {
+                for (size_t i = 0; i < buffer.getBufferCount(); i++)
+                {
+                    vk::DescriptorBufferInfo resourceInfo = {
+                        buffer.getBuffer(i),
+                        0,
+                        createInfo.size,
+                    };
+                    resourceInfos.emplace_back(std::move(resourceInfo));
+                }
+            }
+            else
+            {
+                resourceInfos = {{
+                    buffer.getBuffer(0),
+                    0,
+                    createInfo.size,
+                }};
+            }
+
+            descriptorBinding.type = descriptorType;
+            descriptorBinding.data = resourceInfos;
+
+            m_descriptorSetConfig.bindings.emplace_back(std::move(descriptorBinding));
+
+            return *this;
+        }
+    };
+
+    class GraphicsPipelineBuilder : public PipelineBuilder<GraphicsPipelineCreateInfo>
+    {
+    public:
+        using PipelineBuilder::PipelineBuilder;
 
         GraphicsPipelineBuilder& vertexShader(std::string name)
         {
-            pipelineCreateInfo.shaders.emplace_back(name, vk::ShaderStageFlagBits::eVertex);
+            m_pipelineCreateInfo.shaders.emplace_back(name, vk::ShaderStageFlagBits::eVertex);
             return *this;
         }
 
         template<typename T>
         GraphicsPipelineBuilder& vertexType()
         {
-            pipelineCreateInfo.vertexInputBinding = T::getBindingDescription();
-            pipelineCreateInfo.vertexInputAttributes = T::getAttributeDescriptions();
+            m_pipelineCreateInfo.vertexInputBinding = T::getBindingDescription();
+            m_pipelineCreateInfo.vertexInputAttributes = T::getAttributeDescriptions();
             return *this;
         }
 
         GraphicsPipelineBuilder& fragmentShader(std::string name)
         {
-            pipelineCreateInfo.shaders.emplace_back(name, vk::ShaderStageFlagBits::eFragment);
+            m_pipelineCreateInfo.shaders.emplace_back(name, vk::ShaderStageFlagBits::eFragment);
             return *this;
         }
 
-        GraphicsPipelineBuilder shaderBinding(const Image& image, vk::ShaderStageFlagBits stage, bool hasSampler = true)
+        GraphicsPipelineBuilder& shaderBinding(std::variant<const std::vector<Image>*, const Image*> images, vk::ShaderStageFlagBits stage, const Sampler& sampler = nullptr)
         {
-            auto index = static_cast<uint32_t>(pipelineCreateInfo.descriptorSetLayoutBindings.size());
-            auto descriptorType =
-                hasSampler ?
-                vk::DescriptorType::eCombinedImageSampler :
-                vk::DescriptorType::eSampledImage;
-            pipelineCreateInfo.descriptorSetLayoutBindings.emplace_back(
-                index,
-                descriptorType,
-                1,
-                stage,
-                nullptr);
-            return *this;
-        }
+            auto index = static_cast<uint32_t>(m_pipelineCreateInfo.descriptorSetLayoutBindings.size());
 
-        GraphicsPipelineBuilder shaderBinding(const std::vector<Image>& images, vk::ShaderStageFlagBits stage, bool hasSampler = true)
-        {
-            auto index = static_cast<uint32_t>(pipelineCreateInfo.descriptorSetLayoutBindings.size());
             auto descriptorType =
-                hasSampler ? 
+                sampler.getSampler() != nullptr ? 
                 vk::DescriptorType::eCombinedImageSampler : 
                 vk::DescriptorType::eSampledImage;
-            pipelineCreateInfo.descriptorSetLayoutBindings.emplace_back(
+            auto descriptorCount = 
+                std::holds_alternative<const std::vector<Image>*>(images) ? 
+                std::get<const std::vector<Image>*>(images)->size() : 
+                1;
+
+            m_pipelineCreateInfo.descriptorSetLayoutBindings.emplace_back(
                 index,
                 descriptorType,
-                static_cast<uint32_t>(images.size()),
+                static_cast<uint32_t>(descriptorCount),
                 stage, 
                 nullptr);
+
+            DescriptorBinding descriptorBinding{};
+
+            std::vector<std::vector<vk::DescriptorImageInfo>> resourceInfos{};
+
+            if (descriptorCount == 1)
+            {
+                const auto& image = *std::get<const Image*>(images);
+
+                for (size_t i = 0; i < image.getImages().size(); i++)
+                {
+                    vk::DescriptorImageInfo resourceInfo = {
+                        sampler.getSampler(),
+                        image.getImageView(i),
+                        vk::ImageLayout::eShaderReadOnlyOptimal,
+                    };
+                    resourceInfos.emplace_back(std::vector<vk::DescriptorImageInfo>{ std::move(resourceInfo) });
+                }
+            }
+            else
+            {
+                resourceInfos.resize(1);
+
+                const auto& imageArray = *std::get<const std::vector<Image>*>(images);
+
+                for (const auto& image : imageArray)
+                {
+                    vk::DescriptorImageInfo resourceInfo = {
+                        sampler.getSampler(),
+                        image.getImageView(0),
+                        vk::ImageLayout::eShaderReadOnlyOptimal,
+                    };
+
+                    resourceInfos[0].emplace_back(std::move(resourceInfo));
+                }
+            }
+
+            descriptorBinding.type = descriptorType;
+            descriptorBinding.data = resourceInfos;
+
+            m_descriptorSetConfig.bindings.emplace_back(std::move(descriptorBinding));
+
             return *this;
         }
 
-        GraphicsPipelineBuilder shaderBinding(const Buffer& buffer, vk::ShaderStageFlagBits stage)
+        GraphicsPipelineBuilder& shaderBinding(const Buffer* buffer, vk::ShaderStageFlagBits stage)
         {
-            auto index = static_cast<uint32_t>(pipelineCreateInfo.descriptorSetLayoutBindings.size());
-            const auto& createInfo = buffer.getCreateInfo();
+            auto index = static_cast<uint32_t>(m_pipelineCreateInfo.descriptorSetLayoutBindings.size());
+            const auto& createInfo = buffer->getCreateInfo();
+
             auto descriptorType =
                 (createInfo.usage & vk::BufferUsageFlagBits::eStorageBuffer) ?
                 vk::DescriptorType::eStorageBuffer :
                 vk::DescriptorType::eUniformBuffer;
-            pipelineCreateInfo.descriptorSetLayoutBindings.emplace_back(
+
+            m_pipelineCreateInfo.descriptorSetLayoutBindings.emplace_back(
                 index,
                 descriptorType,
                 1,
                 stage,
                 nullptr);
+
+            DescriptorBinding descriptorBinding{};
+
+            std::vector<vk::DescriptorBufferInfo> resourceInfos{};
+
+            if (descriptorType == vk::DescriptorType::eUniformBuffer)
+            {
+                for (size_t i = 0; i < buffer->getBufferCount(); i++)
+                {
+                    vk::DescriptorBufferInfo resourceInfo = { 
+                        buffer->getBuffer(i),
+                        0,
+                        createInfo.size,
+                    };
+                    resourceInfos.emplace_back(std::move(resourceInfo));
+                }
+            }
+            else
+            {
+                resourceInfos = {{
+                    buffer->getBuffer(0),
+                    0,
+                    createInfo.size,
+                }};
+            }
+
+            descriptorBinding.type = descriptorType;
+            descriptorBinding.data = resourceInfos;
+
+            m_descriptorSetConfig.bindings.emplace_back(std::move(descriptorBinding));
+
             return *this;
         }
 
-        GraphicsPipelineBuilder vertexShaderBinding(const Buffer& buffer)
+        GraphicsPipelineBuilder& vertexShaderBinding(const Buffer& buffer)
         {
-            return shaderBinding(buffer, vk::ShaderStageFlagBits::eVertex);
+            return shaderBinding(&buffer, vk::ShaderStageFlagBits::eVertex);
         }
 
-        GraphicsPipelineBuilder fragmentShaderBinding(const Buffer& buffer)
+        GraphicsPipelineBuilder& fragmentShaderBinding(const Buffer& buffer)
         {
-            return shaderBinding(buffer, vk::ShaderStageFlagBits::eFragment);
+            return shaderBinding(&buffer, vk::ShaderStageFlagBits::eFragment);
         }
 
-        GraphicsPipelineBuilder fragmentShaderBinding(const Image& image, bool hasSampler = true)
+        GraphicsPipelineBuilder& fragmentShaderBinding(const Image& image, const Sampler& sampler = nullptr)
         {
-            return shaderBinding(image, vk::ShaderStageFlagBits::eFragment, hasSampler);
+            return shaderBinding(&image, vk::ShaderStageFlagBits::eFragment, sampler);
         }
 
-        GraphicsPipelineBuilder fragmentShaderBinding(const std::vector<Image>& images, bool hasSampler = true)
+        GraphicsPipelineBuilder& fragmentShaderBinding(const std::vector<Image>& images, const Sampler& sampler = nullptr)
         {
-            return shaderBinding(images, vk::ShaderStageFlagBits::eFragment, hasSampler);
+            return shaderBinding(&images, vk::ShaderStageFlagBits::eFragment, sampler);
         }
 
-        GraphicsPipelineBuilder allShadersBinding(const Buffer& buffer)
+        GraphicsPipelineBuilder& allShadersBinding(const Buffer& buffer)
         {
-            return shaderBinding(buffer, vk::ShaderStageFlagBits::eAllGraphics);
+            return shaderBinding(&buffer, vk::ShaderStageFlagBits::eAllGraphics);
         }
 
-        GraphicsPipelineBuilder renderTarget(const Image& image)
+        GraphicsPipelineBuilder& renderTarget(const Image& image)
         {
             const auto& createInfo = image.getCreateInfo();
  
             if (createInfo.usage & vk::ImageUsageFlagBits::eColorAttachment)
             {
-                pipelineCreateInfo.colorAttachments.emplace_back(createInfo.format);
+                m_pipelineCreateInfo.colorAttachments.emplace_back(createInfo.format);
             }
             else
             {
-                pipelineCreateInfo.depthAttachment = createInfo.format;
+                m_pipelineCreateInfo.depthAttachment = createInfo.format;
             }
             return *this;
         }
 
-        GraphicsPipelineBuilder renderTargetSwapChainColor()
+        GraphicsPipelineBuilder& renderTargetSwapChainColor()
         {
-            pipelineCreateInfo.colorAttachments.emplace_back(m_rhi.getSurfaceFormat());
+            m_pipelineCreateInfo.colorAttachments.emplace_back(m_rhi.getSurfaceFormat());
             return *this;
         }
 
-        GraphicsPipelineBuilder renderTargetSwapChainDepth()
+        GraphicsPipelineBuilder& renderTargetSwapChainDepth()
         {
-            pipelineCreateInfo.depthAttachment = m_rhi.getDepthFormat();
+            m_pipelineCreateInfo.depthAttachment = m_rhi.getDepthFormat();
             return *this;
         }
-
-        Pipeline build()
-        {
-            return m_rhi.createGraphicsPipeline(pipelineCreateInfo);
-        }
-
-    private:
-        RHI& m_rhi;
-        GraphicsPipelineCreateInfo pipelineCreateInfo;
     };
 
     struct RenderPassNode
@@ -264,7 +353,7 @@ namespace Gfx
     {
     public:
         // Construct with references to objects managed elsewhere (HelloTriangleApplication keeps lifetime)
-        RenderGraph(const RHI& rhi);
+        RenderGraph(RHI& rhi);
         RenderGraph(const RenderGraph&) = delete;
 
         // Add a render pass node. Nodes are executed in the order they are added.
@@ -280,20 +369,46 @@ namespace Gfx
         // use pipelineBarrier2 (ImageMemoryBarrier2 + DependencyInfo).
         void executeFrame();
 
-        ComputePipelineBuilder& computePipeline(RHI& rhi)
+        ComputePipelineBuilder& computePipeline()
         {
-            m_builders.emplace_back(ComputePipelineBuilder(rhi));
+            m_builders.emplace_back(ComputePipelineBuilder(m_rhi));
             return std::get<ComputePipelineBuilder>(m_builders.back());
         }
 
-        GraphicsPipelineBuilder& graphicsPipeline(RHI& rhi)
+        GraphicsPipelineBuilder& graphicsPipeline()
         {
-            m_builders.emplace_back(GraphicsPipelineBuilder(rhi));
+            m_builders.emplace_back(GraphicsPipelineBuilder(m_rhi));
             return std::get<GraphicsPipelineBuilder>(m_builders.back());
         }
 
+        template<typename T>
+        T buildDescriptorSets()
+        {
+            std::vector<DescriptorSetConfig> configs;
+
+            for (const auto& builder : m_builders)
+            {
+                auto config = std::holds_alternative<ComputePipelineBuilder>(builder) ?
+                    std::get<ComputePipelineBuilder>(builder).getDescriptorSetConfig() :
+                    std::get<GraphicsPipelineBuilder>(builder).getDescriptorSetConfig();
+
+                configs.emplace_back(std::move(config));
+            }
+
+            auto descriptorSets = m_rhi.createDescriptorSets(configs);
+
+            T container;
+            auto* containerPtr = reinterpret_cast<std::vector<DescriptorSet>*>(&container);
+            for (auto& descriptorSetArray : descriptorSets)
+            {
+                ::new (static_cast<void*>(containerPtr)) std::vector<DescriptorSet>(std::move(descriptorSetArray));
+                containerPtr += 1;
+            }
+            return std::move(container);
+        }
+
     private:
-		const RHI& m_rhi;
+		RHI& m_rhi;
 
         // recorded passes
         std::vector<RenderPassNode> m_passes;

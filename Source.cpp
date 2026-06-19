@@ -121,27 +121,31 @@ private:
     Gfx::Pipeline lightingPipeline = nullptr;
     Gfx::Pipeline postprocPipeline = nullptr;
     std::vector<Gfx::Image> textureImages{};
-    vk::raii::Sampler textureSampler = nullptr;
+    Gfx::Sampler textureSampler = nullptr;
     Gfx::Image gbufferAlbedoImage = nullptr;
     Gfx::Image gbufferNormalImage = nullptr;
     Gfx::Image gbufferPositionImage = nullptr;
     Gfx::Image gbufferInstanceIDImage = nullptr;
-    vk::raii::Sampler gbufferSampler = nullptr;
+    Gfx::Sampler gbufferSampler = nullptr;
     Gfx::Image shadowImage = nullptr;
-    vk::raii::Sampler shadowSampler = nullptr;
+    Gfx::Sampler shadowSampler = nullptr;
     Gfx::Image postprocImage = nullptr;
-    vk::raii::Sampler postprocSampler = nullptr;
+    Gfx::Sampler postprocSampler = nullptr;
     Gfx::Buffer vertexBuffer = nullptr;
     Gfx::Buffer indexBuffer = nullptr;
     Gfx::Buffer indirectBuffer = nullptr;
     Gfx::Buffer storageBuffer = nullptr;
     Gfx::Buffer uniformBuffer = nullptr;
-    std::vector<Gfx::DescriptorSet> computeDescriptorSets{};
-    std::vector<Gfx::DescriptorSet> shadowDescriptorSets{};
-    std::vector<Gfx::DescriptorSet> gbufferDescriptorSets{};
-    std::vector<Gfx::DescriptorSet> cloudDescriptorSets{};
-    std::vector<Gfx::DescriptorSet> lightingDescriptorSets{};
-    std::vector<Gfx::DescriptorSet> postprocDescriptorSets{};
+
+    struct DescriptorSets
+    {
+        std::vector<Gfx::DescriptorSet> compute;
+        std::vector<Gfx::DescriptorSet> shadow;
+        std::vector<Gfx::DescriptorSet> gbuffer;
+        std::vector<Gfx::DescriptorSet> cloud;
+        std::vector<Gfx::DescriptorSet> lighting;
+        std::vector<Gfx::DescriptorSet> postproc;
+    } descriptorSets;
 
     void initWindow() {
         glfwInit();
@@ -169,13 +173,13 @@ private:
         createUniformBuffers();
         createStorageBuffer();
 
-        particlePipeline = graph.computePipeline(rhi)
+        particlePipeline = graph.computePipeline()
             .shader("Shaders/particle.comp.spv")
             .shaderBinding(uniformBuffer)
-            .shaderVariable(storageBuffer)
+            .shaderBinding(storageBuffer)
             .build();
 
-        shadowPipeline = graph.graphicsPipeline(rhi)
+        shadowPipeline = graph.graphicsPipeline()
             .vertexShader("Shaders/shadow.vert.spv")
             .fragmentShader("Shaders/shadow.frag.spv")
             .vertexType<Vertex>()
@@ -184,13 +188,13 @@ private:
             .renderTargetSwapChainDepth()
             .build();
 
-        gbufferPipeline = graph.graphicsPipeline(rhi)
+        gbufferPipeline = graph.graphicsPipeline()
             .vertexShader("Shaders/gbuffer.vert.spv")
             .fragmentShader("Shaders/gbuffer.frag.spv")
             .vertexType<Vertex>()
             .allShadersBinding(uniformBuffer)
             .vertexShaderBinding(storageBuffer)
-            .fragmentShaderBinding(textureImages)
+            .fragmentShaderBinding(textureImages, textureSampler)
             .renderTarget(gbufferAlbedoImage)
             .renderTarget(gbufferNormalImage)
             .renderTarget(gbufferPositionImage)
@@ -198,36 +202,37 @@ private:
             .renderTargetSwapChainDepth()
             .build();
 
-        cloudPipeline = graph.graphicsPipeline(rhi)
+        cloudPipeline = graph.graphicsPipeline()
             .vertexShader("Shaders/cloud.vert.spv")
             .fragmentShader("Shaders/cloud.frag.spv")
             .fragmentShaderBinding(uniformBuffer)
             .renderTargetSwapChainColor()
             .build();
  
-        lightingPipeline = graph.graphicsPipeline(rhi)
+        lightingPipeline = graph.graphicsPipeline()
             .vertexShader("Shaders/lighting.vert.spv")
             .fragmentShader("Shaders/lighting.frag.spv")
             .fragmentShaderBinding(uniformBuffer)
             .fragmentShaderBinding(storageBuffer)
-            .fragmentShaderBinding(gbufferAlbedoImage)
-            .fragmentShaderBinding(gbufferNormalImage)
-            .fragmentShaderBinding(gbufferPositionImage)
-            .fragmentShaderBinding(shadowImage)
-            .fragmentShaderBinding(gbufferInstanceIDImage, false)
+            .fragmentShaderBinding(gbufferAlbedoImage, gbufferSampler)
+            .fragmentShaderBinding(gbufferNormalImage, gbufferSampler)
+            .fragmentShaderBinding(gbufferPositionImage, gbufferSampler)
+            .fragmentShaderBinding(shadowImage, shadowSampler)
+            .fragmentShaderBinding(gbufferInstanceIDImage)
             .renderTargetSwapChainColor()
             .renderTargetSwapChainDepth()
             .build();
 
-        postprocPipeline = graph.graphicsPipeline(rhi)
+        postprocPipeline = graph.graphicsPipeline()
             .vertexShader("Shaders/postproc.vert.spv")
             .fragmentShader("Shaders/postproc.frag.spv")
             .fragmentShaderBinding(uniformBuffer)
-            .fragmentShaderBinding(postprocImage)
+            .fragmentShaderBinding(postprocImage, postprocSampler)
             .renderTargetSwapChainColor()
             .build();
 
-        createDescriptorSets();
+        descriptorSets = graph.buildDescriptorSets<DescriptorSets>();
+
         initRenderGraph();
     }
 
@@ -573,15 +578,13 @@ private:
             textureImages.emplace_back(std::move(textureImage));
         }
 
-        vk::PhysicalDeviceProperties properties = rhi.getPhysicalDevice().getProperties();
         vk::SamplerCreateInfo samplerInfo{};
         samplerInfo.magFilter = vk::Filter::eLinear;
         samplerInfo.minFilter = vk::Filter::eLinear;
         samplerInfo.mipmapMode = vk::SamplerMipmapMode::eLinear;
         samplerInfo.anisotropyEnable = true;
-        samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
 
-        textureSampler = vk::raii::Sampler(rhi.getDevice(), samplerInfo);
+        textureSampler = rhi.createSampler(samplerInfo);
     }
 
     void createShadowResources() {
@@ -604,7 +607,7 @@ private:
         samplerInfo.minFilter = vk::Filter::eLinear;
         samplerInfo.mipmapMode = vk::SamplerMipmapMode::eLinear;
 
-        shadowSampler = vk::raii::Sampler(rhi.getDevice(), samplerInfo);
+        shadowSampler = rhi.createSampler(samplerInfo);
     }
 
     void createPostprocResources() {
@@ -627,7 +630,7 @@ private:
         samplerInfo.minFilter  = vk::Filter::eLinear;
         samplerInfo.mipmapMode = vk::SamplerMipmapMode::eLinear;
 
-        postprocSampler = vk::raii::Sampler(rhi.getDevice(), samplerInfo);
+        postprocSampler = rhi.createSampler(samplerInfo);
     }
 
     void createVertexBuffer() {
@@ -708,122 +711,7 @@ private:
         samplerInfo.addressModeU = vk::SamplerAddressMode::eClampToEdge;
         samplerInfo.addressModeV = vk::SamplerAddressMode::eClampToEdge;
 
-        gbufferSampler = vk::raii::Sampler(rhi.getDevice(), samplerInfo);
-    }
-
-    void createDescriptorSets() {
-        auto maxFramesInFlight = rhi.getMaxFramesInFlight();
-
-        std::vector<vk::DescriptorBufferInfo> uboInfos(maxFramesInFlight);
-        for (size_t i = 0; i < maxFramesInFlight; i++) {
-            uboInfos[i].buffer = uniformBuffer.getBuffer(i);
-            uboInfos[i].range  = sizeof(UniformBufferObject);
-        }
-
-        vk::DescriptorBufferInfo ssboInfo{};
-        ssboInfo.buffer = storageBuffer.getBuffer(0);
-        ssboInfo.range  = sizeof(instances[0]) * instances.size();
-
-        Gfx::DescriptorSetConfig computeConfig{};
-        computeConfig.layout   = particlePipeline.getDescriptorSetLayout();
-        computeConfig.bindings = {
-            { vk::DescriptorType::eUniformBuffer, std::vector<vk::DescriptorBufferInfo>(uboInfos) },
-            { vk::DescriptorType::eStorageBuffer, std::vector<vk::DescriptorBufferInfo>{ ssboInfo } },
-        };
-
-        Gfx::DescriptorSetConfig shadowConfig{};
-        shadowConfig.layout = shadowPipeline.getDescriptorSetLayout();
-        shadowConfig.bindings = {
-            { vk::DescriptorType::eUniformBuffer, std::vector<vk::DescriptorBufferInfo>(uboInfos) },
-            { vk::DescriptorType::eStorageBuffer, std::vector<vk::DescriptorBufferInfo>{ ssboInfo } },
-        };
-
-        std::vector<vk::DescriptorImageInfo> textureImageInfos{};
-        textureImageInfos.reserve(textures.size());
-        for (size_t i = 0; i < textures.size(); i++) {
-            vk::DescriptorImageInfo textureInfo{};
-            textureInfo.sampler     = textureSampler;
-            textureInfo.imageView   = textureImages[i].getImageView(0);
-            textureInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-            textureImageInfos.emplace_back(std::move(textureInfo));
-        }
-
-        Gfx::DescriptorSetConfig gbufferConfig{};
-        gbufferConfig.layout   = gbufferPipeline.getDescriptorSetLayout();
-        gbufferConfig.bindings = {
-            computeConfig.bindings[0],
-            computeConfig.bindings[1],
-            { vk::DescriptorType::eCombinedImageSampler, std::vector<std::vector<vk::DescriptorImageInfo>>{ textureImageInfos } },
-        };
-
-        Gfx::DescriptorSetConfig cloudConfig{};
-        cloudConfig.layout = cloudPipeline.getDescriptorSetLayout();
-        cloudConfig.bindings = {
-            { vk::DescriptorType::eUniformBuffer, std::vector<vk::DescriptorBufferInfo>(uboInfos) },
-        };
-
-        std::vector<std::vector<vk::DescriptorImageInfo>> postprocImageInfos(maxFramesInFlight);
-        for (size_t i = 0; i < maxFramesInFlight; i++) {
-            vk::DescriptorImageInfo colorInfo{};
-            colorInfo.sampler     = postprocSampler;
-            colorInfo.imageView   = postprocImage.getImageView(i);
-            colorInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-            postprocImageInfos[i]    = { colorInfo };
-        }
-
-        std::vector<std::vector<vk::DescriptorImageInfo>> albedoImageInfos(maxFramesInFlight);
-        std::vector<std::vector<vk::DescriptorImageInfo>> normalImageInfos(maxFramesInFlight);
-        std::vector<std::vector<vk::DescriptorImageInfo>> positionImageInfos(maxFramesInFlight);
-        std::vector<std::vector<vk::DescriptorImageInfo>> instanceIDImageInfos(maxFramesInFlight);
-        for (size_t i = 0; i < maxFramesInFlight; i++) {
-            vk::DescriptorImageInfo imageInfo{};
-            imageInfo.sampler = gbufferSampler;
-            imageInfo.imageView = gbufferAlbedoImage.getImageView(i);
-            imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-            albedoImageInfos[i] = { imageInfo };
-            imageInfo.imageView = gbufferNormalImage.getImageView(i);
-            normalImageInfos[i] = { imageInfo };
-            imageInfo.imageView = gbufferPositionImage.getImageView(i);
-            positionImageInfos[i] = { imageInfo };
-            imageInfo.imageView = gbufferInstanceIDImage.getImageView(i);
-            instanceIDImageInfos[i] = { imageInfo };
-        }
-
-        std::vector<std::vector<vk::DescriptorImageInfo>> shadowImageInfos(maxFramesInFlight);
-        for (size_t i = 0; i < maxFramesInFlight; i++) {
-            vk::DescriptorImageInfo shadowInfo{};
-            shadowInfo.sampler = shadowSampler;
-            shadowInfo.imageView = shadowImage.getImageView(i);
-            shadowInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-            shadowImageInfos[i] = { shadowInfo };
-        }
-
-        Gfx::DescriptorSetConfig lightingConfig{};
-        lightingConfig.layout = lightingPipeline.getDescriptorSetLayout();
-        lightingConfig.bindings = {
-            { vk::DescriptorType::eUniformBuffer, std::vector<vk::DescriptorBufferInfo>(uboInfos) },
-            { vk::DescriptorType::eStorageBuffer, std::vector<vk::DescriptorBufferInfo>{ ssboInfo } },
-            { vk::DescriptorType::eCombinedImageSampler, std::vector<std::vector<vk::DescriptorImageInfo>>(albedoImageInfos) },
-            { vk::DescriptorType::eCombinedImageSampler, std::vector<std::vector<vk::DescriptorImageInfo>>(normalImageInfos) },
-            { vk::DescriptorType::eCombinedImageSampler, std::vector<std::vector<vk::DescriptorImageInfo>>(positionImageInfos) },
-            { vk::DescriptorType::eCombinedImageSampler, std::vector<std::vector<vk::DescriptorImageInfo>>(shadowImageInfos) },
-            { vk::DescriptorType::eSampledImage, std::vector<std::vector<vk::DescriptorImageInfo>>(instanceIDImageInfos) },
-        };
-
-        Gfx::DescriptorSetConfig postprocConfig{};
-        postprocConfig.layout   = postprocPipeline.getDescriptorSetLayout();
-        postprocConfig.bindings = {
-            computeConfig.bindings[0],
-            { vk::DescriptorType::eCombinedImageSampler, std::vector<std::vector<vk::DescriptorImageInfo>>(postprocImageInfos) },
-        };
-
-        auto [computeSets, shadowSets, gbufferSets, cloudSets, lightingSets, postprocSets] = rhi.createDescriptorSets(std::array{ computeConfig, shadowConfig, gbufferConfig, cloudConfig, lightingConfig, postprocConfig });
-        computeDescriptorSets  = std::move(computeSets);
-        shadowDescriptorSets = std::move(shadowSets);
-        gbufferDescriptorSets = std::move(gbufferSets);
-        cloudDescriptorSets = std::move(cloudSets);
-        lightingDescriptorSets = std::move(lightingSets);
-        postprocDescriptorSets = std::move(postprocSets);
+        gbufferSampler = rhi.createSampler(samplerInfo);
     }
 
     void initRenderGraph()
@@ -847,7 +735,7 @@ private:
                 vk::PipelineBindPoint::eCompute,
                 particlePipeline.getPipelineLayout(),
                 0,
-                *computeDescriptorSets[imageIndex],
+                *descriptorSets.compute[imageIndex],
                 nullptr);
 
             // shader uses [numthreads(64,1,1)], so ceil(instanceCount / 64) groups in X
@@ -899,7 +787,7 @@ private:
             cmd.beginRendering(renderingInfo);
 
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, shadowPipeline);
-            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, shadowPipeline.getPipelineLayout(), 0, *shadowDescriptorSets[imageIndex], nullptr);
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, shadowPipeline.getPipelineLayout(), 0, *descriptorSets.shadow[imageIndex], nullptr);
             cmd.drawIndexedIndirect(indirectBuffer.getBuffer(0), static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand)), drawCmds.size() - 1, static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand)));
 
             cmd.endRendering();
@@ -942,7 +830,7 @@ private:
             cmd.beginRendering(renderingInfo);
 
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, cloudPipeline);
-            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, cloudPipeline.getPipelineLayout(), 0, *cloudDescriptorSets[imageIndex], nullptr);
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, cloudPipeline.getPipelineLayout(), 0, *descriptorSets.cloud[imageIndex], nullptr);
             cmd.draw(3, 1, 0, 0); // fullscreen triangle — no vertex buffer needed
 
             cmd.endRendering();
@@ -1022,7 +910,7 @@ private:
             cmd.beginRendering(renderingInfo);
 
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, gbufferPipeline);
-            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, gbufferPipeline.getPipelineLayout(), 0, *gbufferDescriptorSets[imageIndex], nullptr);
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, gbufferPipeline.getPipelineLayout(), 0, *descriptorSets.gbuffer[imageIndex], nullptr);
             cmd.drawIndexedIndirect(indirectBuffer.getBuffer(0), 0, drawCmds.size(), static_cast<uint32_t>(sizeof(VkDrawIndexedIndirectCommand)));
 
             cmd.endRendering();
@@ -1091,7 +979,7 @@ private:
             cmd.beginRendering(renderingInfo);
 
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, lightingPipeline);
-            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, lightingPipeline.getPipelineLayout(), 0, *lightingDescriptorSets[imageIndex], nullptr);
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, lightingPipeline.getPipelineLayout(), 0, *descriptorSets.lighting[imageIndex], nullptr);
             cmd.draw(3, 1, 0, 0); // fullscreen triangle — no vertex buffer needed
 
             cmd.endRendering();
@@ -1141,7 +1029,7 @@ private:
             cmd.beginRendering(renderingInfo);
 
             cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, postprocPipeline);
-            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, postprocPipeline.getPipelineLayout(), 0, *postprocDescriptorSets[imageIndex], nullptr);
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, postprocPipeline.getPipelineLayout(), 0, *descriptorSets.postproc[imageIndex], nullptr);
             cmd.draw(3, 1, 0, 0); // fullscreen triangle — no vertex buffer needed
 
             cmd.endRendering();

@@ -591,6 +591,19 @@ Gfx::Image RHI::createImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryProp
     return Gfx::Image(imageInfo, std::move(images), std::move(imageMemories), std::move(imageViews));
 }
 
+Gfx::Sampler RHI::createSampler(const vk::SamplerCreateInfo& samplerInfo)
+{
+    auto info = samplerInfo;
+    if (info.anisotropyEnable && info.maxAnisotropy == 0)
+    {
+        info.maxAnisotropy = m_physicalDevice.getProperties().limits.maxSamplerAnisotropy;
+    }
+
+    auto sampler = vk::raii::Sampler(m_device, info);
+
+    return Gfx::Sampler(std::move(info), std::move(sampler));
+}
+
 void RHI::updateImage(const Gfx::Image& image, const void* contentData, size_t contentSize)
 {
     vk::BufferCreateInfo stagingInfo{};
@@ -632,7 +645,7 @@ void RHI::updateImage(const Gfx::Image& image, const void* contentData, size_t c
     m_graphicsQueue.waitIdle();
 }
 
-Gfx::Pipeline RHI::createGraphicsPipeline(const Gfx::GraphicsPipelineCreateInfo& createInfo)
+Gfx::Pipeline RHI::createPipeline(const Gfx::GraphicsPipelineCreateInfo& createInfo)
 {
     std::vector<vk::Format> colorAttachmentFormats{};
 	std::vector<vk::PipelineColorBlendAttachmentState> colorBlendAttachments{};
@@ -750,7 +763,7 @@ Gfx::Pipeline RHI::createGraphicsPipeline(const Gfx::GraphicsPipelineCreateInfo&
 	return Gfx::Pipeline(std::move(pipeline), std::move(pipelineLayout), std::move(descriptorSetLayout));
 }
 
-Gfx::Pipeline RHI::createComputePipeline(const Gfx::ComputePipelineCreateInfo& createInfo)
+Gfx::Pipeline RHI::createPipeline(const Gfx::ComputePipelineCreateInfo& createInfo)
 {
     vk::DescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.bindingCount = static_cast<uint32_t>(createInfo.descriptorSetLayoutBindings.size());

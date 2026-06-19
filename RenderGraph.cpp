@@ -2,7 +2,7 @@
 
 using Gfx::RenderGraph;
 
-RenderGraph::RenderGraph(const RHI& rhi):
+RenderGraph::RenderGraph(RHI& rhi):
     m_rhi(rhi)
 {
 }

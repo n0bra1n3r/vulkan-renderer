@@ -70,10 +70,11 @@ namespace Gfx
 		void updateBuffer(const Buffer& buffer, const void* contentData, size_t contentSize);
 
 		Image createImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryPropertyFlags memProperties = vk::MemoryPropertyFlagBits::eDeviceLocal);
+		Sampler createSampler(const vk::SamplerCreateInfo& samplerInfo);
 		void updateImage(const Gfx::Image& image, const void* contentData, size_t contentSize);
 
-		Pipeline createGraphicsPipeline(const GraphicsPipelineCreateInfo& createInfo);
-		Pipeline createComputePipeline(const ComputePipelineCreateInfo& createInfo);
+		Pipeline createPipeline(const GraphicsPipelineCreateInfo& createInfo);
+		Pipeline createPipeline(const ComputePipelineCreateInfo& createInfo);
 
 		std::vector<std::vector<DescriptorSet>> createDescriptorSets(const std::vector<DescriptorSetConfig>& configs);
 

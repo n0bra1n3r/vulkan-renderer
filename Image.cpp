@@ -1,6 +1,7 @@
 #include "Image.hpp"
 
 using Gfx::Image;
+using Gfx::Sampler;
 
 Image::Image(
     const vk::ImageCreateInfo& createInfo, 
@@ -18,4 +19,9 @@ Image::Image(
     {
         m_rawImages.emplace_back(*image);
     }
+}
+
+Sampler::Sampler(const vk::SamplerCreateInfo& createInfo, vk::raii::Sampler&& sampler):
+    m_sampler(std::move(sampler))
+{
 }
