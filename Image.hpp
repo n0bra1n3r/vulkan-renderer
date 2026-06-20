@@ -4,6 +4,13 @@
 
 namespace Gfx
 {
+    struct ImageInfo
+    {
+        vk::ImageCreateInfo createInfo;
+        std::vector<vk::Image> images;
+        std::vector<vk::ImageView> imageViews;
+    };
+
     class Image
     {
     private:
@@ -23,13 +30,16 @@ namespace Gfx
         const vk::ImageCreateInfo& getCreateInfo() const { return m_createInfo; }
 		const vk::ImageView& getImageView(int index) const { return *m_imageViews[index]; }
         const vk::Image& getImage(int index) const { return *m_images[index]; }
-        size_t getImageCount() const { return m_images.size(); }
+        int getImageCount() const { return static_cast<int>(m_images.size()); }
+
+        const ImageInfo& getInfo() const { return m_info; }
 
     private:
         vk::ImageCreateInfo m_createInfo;
         std::vector<vk::raii::Image> m_images;
         std::vector<vk::raii::DeviceMemory> m_imageMemories;
         std::vector<vk::raii::ImageView> m_imageViews;
+        ImageInfo m_info;
     };
 
     class Sampler

@@ -11,6 +11,14 @@ Buffer::Buffer(
 	m_bufferMemories(std::move(bufferMemories))
 {
 	m_mappedData.resize(m_buffers.size());
+
+	m_info.createInfo = m_createInfo;
+	m_info.buffers.reserve(m_buffers.size());
+
+	for (const auto& buffer : m_buffers)
+	{
+		m_info.buffers.emplace_back(*buffer);
+	}
 }
 
 void Buffer::map()

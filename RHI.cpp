@@ -524,7 +524,7 @@ void RHI::updateBuffer(const Buffer& buffer, const void* contentData, size_t con
     commandCopyBuffer.begin({ vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
     vk::BufferCopy region{};
     region.size = stagingInfo.size;
-    for (size_t i = 0; i < buffer.getBufferCount(); i++)
+    for (int i = 0; i < buffer.getBufferCount(); i++)
     {
         commandCopyBuffer.copyBuffer(stagingBuffer.getBuffer(0), buffer.getBuffer(i), region);
     }
@@ -628,7 +628,7 @@ void RHI::updateImage(const Gfx::Image& image, const void* contentData, size_t c
     vk::BufferImageCopy region{};
     region.imageSubresource = { vk::ImageAspectFlagBits::eColor, 0, 0, 1 };
     region.imageExtent = image.m_createInfo.extent;
-    for (size_t i = 0; i < image.getImageCount(); i++)
+    for (int i = 0; i < image.getImageCount(); i++)
     {
         transitionImageLayout(commandCopyBuffer, image.getImage(i), vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
         commandCopyBuffer.copyBufferToImage(stagingBuffer.getBuffer(0), image.getImage(i), vk::ImageLayout::eTransferDstOptimal, { region });
@@ -746,7 +746,7 @@ Gfx::Pipeline RHI::createPipeline(const Gfx::GraphicsPipelineCreateInfo& createI
 
     vk::GraphicsPipelineCreateInfo pipelineInfo{};
     pipelineInfo.pNext = &pipelineRenderingCreateInfo;
-    pipelineInfo.stageCount = shaderStages.size();
+    pipelineInfo.stageCount = static_cast<uint32_t>(shaderStages.size());
     pipelineInfo.pStages = shaderStages.data();
     pipelineInfo.pVertexInputState = &vertexInputInfo;
     pipelineInfo.pInputAssemblyState = &inputAssembly;

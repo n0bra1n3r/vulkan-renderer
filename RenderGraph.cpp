@@ -36,11 +36,11 @@ void RenderGraph::init()
             std::move(graphicsBuilder.m_name),
             std::move(pipeline),
             std::move(descriptorSets),
-            graphicsBuilder.m_vertexBuffer,
-            graphicsBuilder.m_indexBuffer,
-            graphicsBuilder.m_drawCommandBuffer,
+            std::move(graphicsBuilder.m_vertexBuffer),
+            std::move(graphicsBuilder.m_indexBuffer),
+            std::move(graphicsBuilder.m_drawCommandBuffer),
             std::move(graphicsBuilder.m_colorTargetImages),
-            graphicsBuilder.m_depthTargetImage,
+            std::move(graphicsBuilder.m_depthTargetImage),
             graphicsBuilder.m_usesSwapChainColor,
             graphicsBuilder.m_usesSwapChainDepth,
             std::move(graphicsBuilder.m_shaderReadImages),
@@ -86,15 +86,15 @@ void RenderGraph::executeFrame()
         init();
     }
 
-    auto& inFlightFence = m_inFlightFences[m_frameIndex];
-    auto& presentComplete = m_presentCompleteSemaphores[m_frameIndex];
-    auto& renderFinished = m_renderFinishedSemaphores[m_frameIndex];
-    auto& commandBuffer = m_commandBuffers[m_frameIndex];
+    auto& inFlightFence = m_inFlightFences[m_imageIndex];
+    auto& presentComplete = m_presentCompleteSemaphores[m_imageIndex];
+    auto& renderFinished = m_renderFinishedSemaphores[m_imageIndex];
+    auto& commandBuffer = m_commandBuffers[m_imageIndex];
 
     // Wait for fence for this frame to be signaled (previous GPU work finished)
     m_rhi.getDevice().waitForFences(*inFlightFence, true, UINT64_MAX);
 
-    m_frameIndex = m_rhi.acquireNextSwapChainImage(*presentComplete).second;
+    m_imageIndex = m_rhi.acquireNextSwapChainImage(*presentComplete).second;
 
     executeRenderPasses();
 
@@ -109,11 +109,11 @@ void RenderGraph::executeFrame()
     submitInfo.pWaitSemaphores = &*presentComplete;
     submitInfo.pWaitDstStageMask = &waitStages;
     submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &*m_commandBuffers[m_frameIndex];
+    submitInfo.pCommandBuffers = &*m_commandBuffers[m_imageIndex];
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = &*renderFinished;
 
-    m_rhi.presentSwapChainImage(m_frameIndex, submitInfo, *inFlightFence);
+    m_rhi.presentSwapChainImage(m_imageIndex, submitInfo, *inFlightFence);
 }
 
 // ---------------------------------------------------------------------------
@@ -126,12 +126,12 @@ void RenderGraph::executeRenderPasses()
     // Only images that appear as render targets in ANY pass are tracked.
     // Static textures (shader-read only, never a render target) are assumed to already
     // be in eShaderReadOnlyOptimal and are not transitioned.
-    std::unordered_map<const Image*, vk::ImageLayout> imageLayouts;
+    std::unordered_map<VkImage, vk::ImageLayout> imageLayouts{};
     auto swapChainColorLayout = vk::ImageLayout::eUndefined;
     auto swapChainDepthLayout = vk::ImageLayout::eUndefined;
 
     // Which render targets have been cleared this frame (determines loadOp)
-    std::unordered_set<const Image*> clearedImages;
+    std::unordered_set<VkImage> clearedImages{};
     auto swapChainColorCleared = false;
     auto swapChainDepthCleared = false;
 
@@ -142,14 +142,14 @@ void RenderGraph::executeRenderPasses()
         {
             const auto& graphicsPass = std::get<GraphicsPass>(renderPass);
 
-            for (const auto* image : graphicsPass.colorTargetImages)
+            for (const auto& image : graphicsPass.colorTargetImages)
             {
-                imageLayouts.try_emplace(image, vk::ImageLayout::eUndefined);
+                imageLayouts.try_emplace(image.images[0], vk::ImageLayout::eUndefined);
             }
 
-            if (graphicsPass.depthTargetImage)
+            if (graphicsPass.depthTargetImage.images.size())
             {
-                imageLayouts.try_emplace(graphicsPass.depthTargetImage, vk::ImageLayout::eUndefined);
+                imageLayouts.try_emplace(graphicsPass.depthTargetImage.images[0], vk::ImageLayout::eUndefined);
             }
         }
     }
@@ -234,7 +234,7 @@ void RenderGraph::executeRenderPasses()
         barriers.push_back(barrier);
     };
 
-    const auto& commandBuffer = m_commandBuffers[m_frameIndex];
+    const auto& commandBuffer = m_commandBuffers[m_imageIndex];
 
     commandBuffer.begin({ vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
 
@@ -253,7 +253,7 @@ void RenderGraph::executeRenderPasses()
                 vk::PipelineBindPoint::eCompute,
                 computePass.pipeline.getPipelineLayout(),
                 0,
-                *computePass.descriptorSets[m_frameIndex],
+                *computePass.descriptorSets[m_imageIndex],
                 nullptr);
 
             // shader uses [numthreads(64,1,1)], so ceil(instanceCount / 64) groups in X
@@ -267,16 +267,16 @@ void RenderGraph::executeRenderPasses()
         std::vector<vk::ImageMemoryBarrier2> barriers{};
 
         // ---- 1. Shader-read transitions (render targets from earlier passes) ----
-        for (const auto* image : graphicsPass.shaderReadImages)
+        for (const auto& image : graphicsPass.shaderReadImages)
         {
-            auto it = imageLayouts.find(image);
+            auto it = imageLayouts.find(image.images[0]);
             if (it != imageLayouts.end() && it->second != vk::ImageLayout::eShaderReadOnlyOptimal)
             {
-                bool isDepth = !!(image->getCreateInfo().usage & vk::ImageUsageFlagBits::eDepthStencilAttachment);
+                bool isDepth = !!(image.createInfo.usage & vk::ImageUsageFlagBits::eDepthStencilAttachment);
                 auto aspectFlags = isDepth ? vk::ImageAspectFlagBits::eDepth : vk::ImageAspectFlagBits::eColor;
                 addImageBarrier(
                     barriers, 
-                    image->getImage(m_frameIndex),
+                    image.images[m_imageIndex],
                     it->second, 
                     vk::ImageLayout::eShaderReadOnlyOptimal, 
                     aspectFlags);
@@ -286,24 +286,24 @@ void RenderGraph::executeRenderPasses()
         }
 
         // ---- 2. Color render-target transitions ----
-        for (const auto* image : graphicsPass.colorTargetImages)
+        for (const auto& image : graphicsPass.colorTargetImages)
         {
-            auto& layout = imageLayouts[image];
+            auto& layout = imageLayouts[image.images[0]];
             addImageBarrier(
                 barriers, 
-                image->getImage(m_frameIndex),
+                image.images[m_imageIndex],
                 layout, vk::ImageLayout::eColorAttachmentOptimal,
                 vk::ImageAspectFlagBits::eColor);
             layout = vk::ImageLayout::eColorAttachmentOptimal;
         }
 
         // ---- 3. Depth render-target transition (user image) ----
-        if (graphicsPass.depthTargetImage)
+        if (graphicsPass.depthTargetImage.images.size())
         {
-            auto& layout = imageLayouts[graphicsPass.depthTargetImage];
+            auto& layout = imageLayouts[graphicsPass.depthTargetImage.images[0]];
             addImageBarrier(
                 barriers, 
-                graphicsPass.depthTargetImage->getImage(m_frameIndex),
+                graphicsPass.depthTargetImage.images[m_imageIndex],
                 layout, 
                 vk::ImageLayout::eDepthAttachmentOptimal,
                 vk::ImageAspectFlagBits::eDepth);
@@ -316,7 +316,7 @@ void RenderGraph::executeRenderPasses()
             anyPassUsedSwapChainColor = true;
             addImageBarrier(
                 barriers, 
-                m_rhi.getSwapChainImage(m_frameIndex),
+                m_rhi.getSwapChainImage(m_imageIndex),
                 swapChainColorLayout, 
                 vk::ImageLayout::eColorAttachmentOptimal,
                 vk::ImageAspectFlagBits::eColor);
@@ -328,7 +328,7 @@ void RenderGraph::executeRenderPasses()
         {
             addImageBarrier(
                 barriers, 
-                m_rhi.getDepthImage(m_frameIndex),
+                m_rhi.getDepthImage(m_imageIndex),
                 swapChainDepthLayout, 
                 vk::ImageLayout::eDepthAttachmentOptimal,
                 vk::ImageAspectFlagBits::eDepth);
@@ -361,11 +361,11 @@ void RenderGraph::executeRenderPasses()
         vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
         std::vector<vk::RenderingAttachmentInfo> colorAttachmentInfos;
 
-        for (const auto* image : graphicsPass.colorTargetImages)
+        for (const auto& image : graphicsPass.colorTargetImages)
         {
-            bool firstUse = clearedImages.insert(image).second;
+            bool firstUse = clearedImages.insert(image.images[m_imageIndex]).second;
             vk::RenderingAttachmentInfo info{};
-            info.imageView = image->getImageView(m_frameIndex);
+            info.imageView = image.imageViews[m_imageIndex];
             info.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
             info.loadOp = firstUse ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eLoad;
             info.storeOp = vk::AttachmentStoreOp::eStore;
@@ -378,7 +378,7 @@ void RenderGraph::executeRenderPasses()
             bool firstUse = !swapChainColorCleared;
             swapChainColorCleared = true;
             vk::RenderingAttachmentInfo info{};
-            info.imageView = m_rhi.getSwapChainImageView(m_frameIndex);
+            info.imageView = m_rhi.getSwapChainImageView(m_imageIndex);
             info.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
             info.loadOp = firstUse ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eLoad;
             info.storeOp = vk::AttachmentStoreOp::eStore;
@@ -388,16 +388,16 @@ void RenderGraph::executeRenderPasses()
 
         // Depth attachment (user image OR swap-chain depth, at most one)
         vk::RenderingAttachmentInfo depthAttachmentInfo{};
-        bool hasDepth = (graphicsPass.depthTargetImage != nullptr) || graphicsPass.usesSwapChainDepth;
+        bool hasDepth = (graphicsPass.depthTargetImage.images.size()) || graphicsPass.usesSwapChainDepth;
 
         if (hasDepth)
         {
             vk::ClearValue clearDepth = vk::ClearDepthStencilValue(1.0f, 0);
 
-            if (graphicsPass.depthTargetImage)
+            if (graphicsPass.depthTargetImage.images.size())
             {
-                bool firstUse = clearedImages.insert(graphicsPass.depthTargetImage).second;
-                depthAttachmentInfo.imageView = graphicsPass.depthTargetImage->getImageView(m_frameIndex);
+                bool firstUse = clearedImages.insert(graphicsPass.depthTargetImage.images[m_imageIndex]).second;
+                depthAttachmentInfo.imageView = graphicsPass.depthTargetImage.imageViews[m_imageIndex];
                 depthAttachmentInfo.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
                 depthAttachmentInfo.loadOp = firstUse ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eLoad;
                 depthAttachmentInfo.storeOp = vk::AttachmentStoreOp::eStore;
@@ -407,7 +407,7 @@ void RenderGraph::executeRenderPasses()
             {
                 bool firstUse = !swapChainDepthCleared;
                 swapChainDepthCleared = true;
-                depthAttachmentInfo.imageView = m_rhi.getDepthImageView(m_frameIndex);
+                depthAttachmentInfo.imageView = m_rhi.getDepthImageView(m_imageIndex);
                 depthAttachmentInfo.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
                 depthAttachmentInfo.loadOp = firstUse ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eLoad;
                 depthAttachmentInfo.storeOp = vk::AttachmentStoreOp::eStore;
@@ -438,27 +438,27 @@ void RenderGraph::executeRenderPasses()
                 vk::PipelineBindPoint::eGraphics,
                 graphicsPass.pipeline.getPipelineLayout(),
                 0,
-                *graphicsPass.descriptorSets[m_frameIndex],
+                *graphicsPass.descriptorSets[m_imageIndex],
                 nullptr);
         }
 
         // ---- Draw ----
-        if (graphicsPass.drawCommandBuffer)
+        if (graphicsPass.drawCommandBuffer.buffers.size())
         {
             // Indexed indirect draw (mesh geometry)
-            if (graphicsPass.vertexBuffer)
+            if (graphicsPass.vertexBuffer.buffers.size())
             {
-                commandBuffer.bindVertexBuffers(0, graphicsPass.vertexBuffer->getBuffer(0), { vk::DeviceSize(0) });
+                commandBuffer.bindVertexBuffers(0, graphicsPass.vertexBuffer.buffers[0], {vk::DeviceSize(0)});
             }
 
-            if (graphicsPass.indexBuffer)
+            if (graphicsPass.indexBuffer.buffers.size())
             {
-                commandBuffer.bindIndexBuffer(graphicsPass.indexBuffer->getBuffer(0), 0, vk::IndexType::eUint32);
+                commandBuffer.bindIndexBuffer(graphicsPass.indexBuffer.buffers[0], 0, vk::IndexType::eUint32);
             }
 
-            auto drawCount = static_cast<uint32_t>(graphicsPass.drawCommandBuffer->getCreateInfo().size / sizeof(vk::DrawIndexedIndirectCommand));
+            auto drawCount = static_cast<uint32_t>(graphicsPass.drawCommandBuffer.createInfo.size / sizeof(vk::DrawIndexedIndirectCommand));
             commandBuffer.drawIndexedIndirect(
-                graphicsPass.drawCommandBuffer->getBuffer(0),
+                graphicsPass.drawCommandBuffer.buffers[0],
                 0,
                 drawCount,
                 static_cast<uint32_t>(sizeof(vk::DrawIndexedIndirectCommand)));
@@ -483,7 +483,7 @@ void RenderGraph::executeRenderPasses()
         presentBarrier.dstAccessMask = {};
         presentBarrier.oldLayout = vk::ImageLayout::eColorAttachmentOptimal;
         presentBarrier.newLayout = vk::ImageLayout::ePresentSrcKHR;
-        presentBarrier.image = m_rhi.getSwapChainImage(m_frameIndex);
+        presentBarrier.image = m_rhi.getSwapChainImage(m_imageIndex);
         presentBarrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
         presentBarrier.subresourceRange.levelCount = 1;
         presentBarrier.subresourceRange.layerCount = 1;

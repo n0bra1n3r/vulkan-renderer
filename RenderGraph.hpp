@@ -53,7 +53,7 @@ namespace Gfx
     private:
         friend class RenderGraph;
 
-        ComputePipelineBuilder(const std::string& name, uint32_t minDispatchThreadCount) : 
+        ComputePipelineBuilder(const std::string& name, uint32_t minDispatchThreadCount) :
             PipelineBuilder(name),
             m_minDispatchThreadCount(minDispatchThreadCount)
         {}
@@ -88,7 +88,7 @@ namespace Gfx
 
             if (descriptorType == vk::DescriptorType::eUniformBuffer)
             {
-                for (size_t i = 0; i < buffer.getBufferCount(); i++)
+                for (int i = 0; i < buffer.getBufferCount(); i++)
                 {
                     vk::DescriptorBufferInfo resourceInfo = {
                         buffer.getBuffer(i),
@@ -142,19 +142,19 @@ namespace Gfx
         {
             m_pipelineCreateInfo.vertexInputBinding = T::getBindingDescription();
             m_pipelineCreateInfo.vertexInputAttributes = T::getAttributeDescriptions();
-            m_vertexBuffer = &buffer;
+            m_vertexBuffer = std::move(buffer.getInfo());
             return *this;
         }
 
         GraphicsPipelineBuilder& indexBuffer(const Buffer& buffer)
         {
-            m_indexBuffer = &buffer;
+            m_indexBuffer = std::move(buffer.getInfo());
             return *this;
         }
 
         GraphicsPipelineBuilder& drawCommandBuffer(const Buffer& buffer)
         {
-            m_drawCommandBuffer = &buffer;
+            m_drawCommandBuffer = std::move(buffer.getInfo());
             return *this;
         }
 
@@ -196,12 +196,12 @@ namespace Gfx
             if (createInfo.usage & vk::ImageUsageFlagBits::eColorAttachment)
             {
                 m_pipelineCreateInfo.colorAttachments.emplace_back(createInfo.format);
-                m_colorTargetImages.push_back(&image);
+                m_colorTargetImages.emplace_back(std::move(image.getInfo()));
             }
             else
             {
                 m_pipelineCreateInfo.depthAttachment = createInfo.format;
-                m_depthTargetImage = &image;
+                m_depthTargetImage = std::move(image.getInfo());
             }
             return *this;
         }
@@ -249,9 +249,9 @@ namespace Gfx
             {
                 const auto& image = *std::get<const Image*>(images);
 
-                m_shaderReadImages.push_back(&image);
+                m_shaderReadImages.emplace_back(std::move(image.getInfo()));
 
-                for (size_t i = 0; i < image.getImageCount(); i++)
+                for (int i = 0; i < image.getImageCount(); i++)
                 {
                     vk::DescriptorImageInfo resourceInfo = {
                         sampler.getSampler(),
@@ -269,7 +269,7 @@ namespace Gfx
 
                 for (const auto& image : imageArray)
                 {
-                    m_shaderReadImages.push_back(&image);
+                    m_shaderReadImages.emplace_back(std::move(image.getInfo()));
 
                     vk::DescriptorImageInfo resourceInfo = {
                         sampler.getSampler(),
@@ -312,7 +312,7 @@ namespace Gfx
 
             if (descriptorType == vk::DescriptorType::eUniformBuffer)
             {
-                for (size_t i = 0; i < buffer->getBufferCount(); i++)
+                for (int i = 0; i < buffer->getBufferCount(); i++)
                 {
                     vk::DescriptorBufferInfo resourceInfo = {
                         buffer->getBuffer(i),
@@ -340,19 +340,19 @@ namespace Gfx
         }
 
     private:
-        const Buffer* m_vertexBuffer = nullptr;
-        const Buffer* m_indexBuffer = nullptr;
-        const Buffer* m_drawCommandBuffer = nullptr;
+        vk::Format m_swapChainColorFormat;
+        vk::Format m_swapChainDepthFormat;
 
-        std::vector<const Image*> m_colorTargetImages{};
-        const Image* m_depthTargetImage = nullptr;
+        BufferInfo m_vertexBuffer{};
+        BufferInfo m_indexBuffer{};
+        BufferInfo m_drawCommandBuffer{};
+
+        std::vector<ImageInfo> m_colorTargetImages{};
+        ImageInfo m_depthTargetImage{};
         bool m_usesSwapChainColor = false;
         bool m_usesSwapChainDepth = false;
 
-        std::vector<const Image*> m_shaderReadImages{};
-
-        vk::Format m_swapChainColorFormat;
-        vk::Format m_swapChainDepthFormat;
+        std::vector<ImageInfo> m_shaderReadImages{};
     };
 
     // ---- Render pass data stored by the render graph ----
@@ -370,14 +370,14 @@ namespace Gfx
         std::string name;
         Pipeline pipeline;
         std::vector<DescriptorSet> descriptorSets;
-        const Buffer* vertexBuffer;
-        const Buffer* indexBuffer;
-        const Buffer* drawCommandBuffer;
-        std::vector<const Image*> colorTargetImages;
-        const Image* depthTargetImage;
+        BufferInfo vertexBuffer;
+        BufferInfo indexBuffer;
+        BufferInfo drawCommandBuffer;
+        std::vector<ImageInfo> colorTargetImages;
+        ImageInfo depthTargetImage;
         bool usesSwapChainColor;
         bool usesSwapChainDepth;
-        std::vector<const Image*> shaderReadImages;
+        std::vector<ImageInfo> shaderReadImages;
     };
 
     class RenderGraph
@@ -407,7 +407,7 @@ namespace Gfx
         // with automatic image layout transitions. Otherwise, legacy RenderPassNode passes are used.
         void executeFrame();
 
-        uint64_t getFrameIndex() const { return m_frameIndex; }
+        uint64_t getFrameIndex() const { return m_imageIndex; }
 
     private:
         void executeRenderPasses();
@@ -426,6 +426,6 @@ namespace Gfx
         std::vector<vk::raii::Semaphore> m_renderFinishedSemaphores;
         std::vector<vk::raii::Fence> m_inFlightFences;
 
-        uint64_t m_frameIndex = 0;
+        int m_imageIndex = 0;
     };
 }
