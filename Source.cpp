@@ -157,11 +157,10 @@ private:
         createUniformBuffers();
         createStorageBuffer();
 
-        //particlePipeline = graph.computePipeline()
-        //    .shader("Shaders/particle.comp.spv")
-        //    .shaderBinding(uniformBuffer)
-        //    .shaderBinding(storageBuffer)
-        //    .build();
+        graph.computePass("Particle", PARTICLE_COUNT)
+            .shader("Shaders/particle.comp.spv")
+            .shaderBinding(uniformBuffer)
+            .shaderBinding(storageBuffer);
 
         graph.graphicsPass("Shadow")
             .vertexShader("Shaders/shadow.vert.spv")

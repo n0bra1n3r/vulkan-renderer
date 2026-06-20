@@ -40,27 +40,25 @@ namespace Gfx
     class PipelineBuilder
     {
     protected:
-        friend class RenderGraph;
-
-        PipelineBuilder(const std::string& name, vk::Format swapChainColorFormat, vk::Format swapChainDepthFormat) :
-            m_name(name),
-            m_swapChainColorFormat(swapChainColorFormat),
-            m_swapChainDepthFormat(swapChainDepthFormat)
-        {}
+        PipelineBuilder(const std::string& name) : m_name(name) {}
 
         PipelineCreateInfo m_pipelineCreateInfo;
         std::vector<DescriptorBinding> m_descriptorBindings;
 
         std::string m_name;
-        vk::Format m_swapChainColorFormat;
-        vk::Format m_swapChainDepthFormat;
     };
 
     class ComputePipelineBuilder : public PipelineBuilder<ComputePipelineCreateInfo>
     {
-    public:
-        using PipelineBuilder::PipelineBuilder;
+    private:
+        friend class RenderGraph;
 
+        ComputePipelineBuilder(const std::string& name, uint32_t minDispatchThreadCount) : 
+            PipelineBuilder(name),
+            m_minDispatchThreadCount(minDispatchThreadCount)
+        {}
+
+    public:
         ComputePipelineBuilder& shader(std::string name)
         {
             m_pipelineCreateInfo.shader = name;
@@ -116,24 +114,23 @@ namespace Gfx
 
             return *this;
         }
+
+    private:
+        uint32_t m_minDispatchThreadCount;
     };
 
     class GraphicsPipelineBuilder : public PipelineBuilder<GraphicsPipelineCreateInfo>
     {
+    private:
+        friend class RenderGraph;
+
+        GraphicsPipelineBuilder(const std::string& name, vk::Format swapChainColorFormat, vk::Format swapChainDepthFormat) :
+            PipelineBuilder(name),
+            m_swapChainColorFormat(swapChainColorFormat),
+            m_swapChainDepthFormat(swapChainDepthFormat)
+        {}
+
     public:
-        using PipelineBuilder::PipelineBuilder;
-
-        const Buffer* m_vertexBuffer = nullptr;
-        const Buffer* m_indexBuffer = nullptr;
-        const Buffer* m_drawCommandBuffer = nullptr;
-
-        std::vector<const Image*> m_colorTargetImages;
-        const Image* m_depthTargetImage = nullptr;
-        bool m_usesSwapChainColor = false;
-        bool m_usesSwapChainDepth = false;
-
-        std::vector<const Image*> m_shaderReadImages;
-
         GraphicsPipelineBuilder& vertexShader(std::string name)
         {
             m_pipelineCreateInfo.shaders.emplace_back(name, vk::ShaderStageFlagBits::eVertex);
@@ -341,6 +338,21 @@ namespace Gfx
 
             return *this;
         }
+
+    private:
+        const Buffer* m_vertexBuffer = nullptr;
+        const Buffer* m_indexBuffer = nullptr;
+        const Buffer* m_drawCommandBuffer = nullptr;
+
+        std::vector<const Image*> m_colorTargetImages{};
+        const Image* m_depthTargetImage = nullptr;
+        bool m_usesSwapChainColor = false;
+        bool m_usesSwapChainDepth = false;
+
+        std::vector<const Image*> m_shaderReadImages{};
+
+        vk::Format m_swapChainColorFormat;
+        vk::Format m_swapChainDepthFormat;
     };
 
     // ---- Render pass data stored by the render graph ----
@@ -348,6 +360,7 @@ namespace Gfx
     struct ComputePass
     {
         std::string name;
+        uint32_t minDispatchThreadCount;
         Pipeline pipeline;
         std::vector<DescriptorSet> descriptorSets;
     };
@@ -373,10 +386,16 @@ namespace Gfx
         RenderGraph(RHI& rhi) : m_rhi(rhi) {}
         RenderGraph(const RenderGraph&) = delete;
 
+        ComputePipelineBuilder& computePass(const std::string& name, uint32_t minDispatchThreadCount)
+        {
+            m_pipelineBuilders.emplace_back(ComputePipelineBuilder(name, minDispatchThreadCount));
+            return std::get<ComputePipelineBuilder>(m_pipelineBuilders.back());
+        }
+
         GraphicsPipelineBuilder& graphicsPass(const std::string& name)
         {
             m_pipelineBuilders.emplace_back(GraphicsPipelineBuilder(name, m_rhi.getSurfaceFormat(), m_rhi.getDepthFormat()));
-            return m_pipelineBuilders.back();
+            return std::get<GraphicsPipelineBuilder>(m_pipelineBuilders.back());
         }
 
         // Initialize per-frame resources (command buffers, semaphores, fences).
@@ -396,9 +415,9 @@ namespace Gfx
     private:
         RHI& m_rhi;
 
-        std::vector<GraphicsPass> m_renderPasses;
+        std::vector<std::variant<ComputePass, GraphicsPass>> m_renderPasses;
 
-        std::vector<GraphicsPipelineBuilder> m_pipelineBuilders;
+        std::vector<std::variant<ComputePipelineBuilder, GraphicsPipelineBuilder>> m_pipelineBuilders;
 
         std::vector<vk::raii::CommandBuffer> m_commandBuffers;
 

@@ -10,23 +10,44 @@ void RenderGraph::init()
 {
     for (const auto& builder : m_pipelineBuilders)
     {
-        auto pipeline = m_rhi.createPipeline(builder.m_pipelineCreateInfo);
-        auto descriptorSetsVec = m_rhi.createDescriptorSets({ { pipeline.getDescriptorSetLayout(), builder.m_descriptorBindings } });
+        if (std::holds_alternative<ComputePipelineBuilder>(builder))
+        {
+            const auto& computeBuilder = std::get<ComputePipelineBuilder>(builder);
+
+            auto pipeline = m_rhi.createPipeline(computeBuilder.m_pipelineCreateInfo);
+            auto descriptorSetsVec = m_rhi.createDescriptorSets({ { pipeline.getDescriptorSetLayout(), computeBuilder.m_descriptorBindings } });
+
+            m_renderPasses.emplace_back(ComputePass{
+                std::move(computeBuilder.m_name),
+                computeBuilder.m_minDispatchThreadCount,
+                std::move(pipeline),
+                std::move(descriptorSetsVec[0]),
+             });
+
+            continue;
+        }
+
+        const auto& graphicsBuilder = std::get<GraphicsPipelineBuilder>(builder);
+
+        auto pipeline = m_rhi.createPipeline(graphicsBuilder.m_pipelineCreateInfo);
+        auto descriptorSetsVec = m_rhi.createDescriptorSets({ { pipeline.getDescriptorSetLayout(), graphicsBuilder.m_descriptorBindings } });
 
         m_renderPasses.emplace_back(GraphicsPass{
-            std::move(builder.m_name),
+            std::move(graphicsBuilder.m_name),
             std::move(pipeline),
             std::move(descriptorSetsVec[0]),
-            builder.m_vertexBuffer,
-            builder.m_indexBuffer,
-            builder.m_drawCommandBuffer,
-            std::move(builder.m_colorTargetImages),
-            builder.m_depthTargetImage,
-            builder.m_usesSwapChainColor,
-            builder.m_usesSwapChainDepth,
-            std::move(builder.m_shaderReadImages),
-        });
+            graphicsBuilder.m_vertexBuffer,
+            graphicsBuilder.m_indexBuffer,
+            graphicsBuilder.m_drawCommandBuffer,
+            std::move(graphicsBuilder.m_colorTargetImages),
+            graphicsBuilder.m_depthTargetImage,
+            graphicsBuilder.m_usesSwapChainColor,
+            graphicsBuilder.m_usesSwapChainDepth,
+            std::move(graphicsBuilder.m_shaderReadImages),
+            });
     }
+
+    m_pipelineBuilders.clear();
 
     // allocate one command buffer per swapchain image (common simple approach)
     vk::CommandBufferAllocateInfo allocInfo{};
@@ -106,30 +127,35 @@ void RenderGraph::executeRenderPasses()
     // Static textures (shader-read only, never a render target) are assumed to already
     // be in eShaderReadOnlyOptimal and are not transitioned.
     std::unordered_map<const Image*, vk::ImageLayout> imageLayouts;
-    vk::ImageLayout swapChainColorLayout = vk::ImageLayout::eUndefined;
-    vk::ImageLayout swapChainDepthLayout = vk::ImageLayout::eUndefined;
+    auto swapChainColorLayout = vk::ImageLayout::eUndefined;
+    auto swapChainDepthLayout = vk::ImageLayout::eUndefined;
 
     // Which render targets have been cleared this frame (determines loadOp)
     std::unordered_set<const Image*> clearedImages;
-    bool swapChainColorCleared = false;
-    bool swapChainDepthCleared = false;
+    auto swapChainColorCleared = false;
+    auto swapChainDepthCleared = false;
 
     // Seed the tracking map with all render-target images across every pass
     for (const auto& renderPass : m_renderPasses)
     {
-        for (const auto* image : renderPass.colorTargetImages)
+        if (std::holds_alternative<GraphicsPass>(renderPass))
         {
-            imageLayouts.try_emplace(image, vk::ImageLayout::eUndefined);
-        }
+            const auto& graphicsPass = std::get<GraphicsPass>(renderPass);
 
-        if (renderPass.depthTargetImage)
-        {
-            imageLayouts.try_emplace(renderPass.depthTargetImage, vk::ImageLayout::eUndefined);
+            for (const auto* image : graphicsPass.colorTargetImages)
+            {
+                imageLayouts.try_emplace(image, vk::ImageLayout::eUndefined);
+            }
+
+            if (graphicsPass.depthTargetImage)
+            {
+                imageLayouts.try_emplace(graphicsPass.depthTargetImage, vk::ImageLayout::eUndefined);
+            }
         }
     }
 
     auto swapChainExtent = m_rhi.getSwapChainExtent();
-    bool anyPassUsedSwapChainColor = false;
+    auto anyPassUsedSwapChainColor = false;
 
     // ---- Helper: populate a barrier based on old/new layout ----
     auto addImageBarrier = [](
@@ -212,10 +238,31 @@ void RenderGraph::executeRenderPasses()
     // ================================================================
     for (const auto& renderPass : m_renderPasses)
     {
-        std::vector<vk::ImageMemoryBarrier2> barriers;
+        if (std::holds_alternative<ComputePass>(renderPass))
+        {
+            const auto& computePass = std::get<ComputePass>(renderPass);
+
+            commandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, computePass.pipeline);
+
+            commandBuffer.bindDescriptorSets(
+                vk::PipelineBindPoint::eCompute,
+                computePass.pipeline.getPipelineLayout(),
+                0,
+                *computePass.descriptorSets[m_frameIndex],
+                nullptr);
+
+            // shader uses [numthreads(64,1,1)], so ceil(instanceCount / 64) groups in X
+            commandBuffer.dispatch((computePass.minDispatchThreadCount + 63) / 64, 1, 1);
+
+            continue;
+        }
+
+        const auto& graphicsPass = std::get<GraphicsPass>(renderPass);
+
+        std::vector<vk::ImageMemoryBarrier2> barriers{};
 
         // ---- 1. Shader-read transitions (render targets from earlier passes) ----
-        for (const auto* img : renderPass.shaderReadImages)
+        for (const auto* img : graphicsPass.shaderReadImages)
         {
             auto it = imageLayouts.find(img);
             if (it != imageLayouts.end() && it->second != vk::ImageLayout::eShaderReadOnlyOptimal)
@@ -232,7 +279,7 @@ void RenderGraph::executeRenderPasses()
         }
 
         // ---- 2. Color render-target transitions ----
-        for (const auto* img : renderPass.colorTargetImages)
+        for (const auto* img : graphicsPass.colorTargetImages)
         {
             auto& layout = imageLayouts[img];
             addImageBarrier(barriers, img->getImages()[m_frameIndex],
@@ -242,17 +289,17 @@ void RenderGraph::executeRenderPasses()
         }
 
         // ---- 3. Depth render-target transition (user image) ----
-        if (renderPass.depthTargetImage)
+        if (graphicsPass.depthTargetImage)
         {
-            auto& layout = imageLayouts[renderPass.depthTargetImage];
-            addImageBarrier(barriers, renderPass.depthTargetImage->getImages()[m_frameIndex],
+            auto& layout = imageLayouts[graphicsPass.depthTargetImage];
+            addImageBarrier(barriers, graphicsPass.depthTargetImage->getImages()[m_frameIndex],
                 layout, vk::ImageLayout::eDepthAttachmentOptimal,
                 vk::ImageAspectFlagBits::eDepth);
             layout = vk::ImageLayout::eDepthAttachmentOptimal;
         }
 
         // ---- 4. Swap-chain color transition ----
-        if (renderPass.usesSwapChainColor)
+        if (graphicsPass.usesSwapChainColor)
         {
             anyPassUsedSwapChainColor = true;
             addImageBarrier(barriers, m_rhi.getSwapChainImages()[m_frameIndex],
@@ -262,7 +309,7 @@ void RenderGraph::executeRenderPasses()
         }
 
         // ---- 5. Swap-chain depth transition ----
-        if (renderPass.usesSwapChainDepth)
+        if (graphicsPass.usesSwapChainDepth)
         {
             addImageBarrier(barriers, m_rhi.getDepthImages()[m_frameIndex],
                 swapChainDepthLayout, vk::ImageLayout::eDepthAttachmentOptimal,
@@ -296,7 +343,7 @@ void RenderGraph::executeRenderPasses()
         vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
         std::vector<vk::RenderingAttachmentInfo> colorAttachmentInfos;
 
-        for (const auto* img : renderPass.colorTargetImages)
+        for (const auto* img : graphicsPass.colorTargetImages)
         {
             bool firstUse = clearedImages.insert(img).second;
             vk::RenderingAttachmentInfo info{};
@@ -308,7 +355,7 @@ void RenderGraph::executeRenderPasses()
             colorAttachmentInfos.push_back(info);
         }
 
-        if (renderPass.usesSwapChainColor)
+        if (graphicsPass.usesSwapChainColor)
         {
             bool firstUse = !swapChainColorCleared;
             swapChainColorCleared = true;
@@ -323,16 +370,16 @@ void RenderGraph::executeRenderPasses()
 
         // Depth attachment (user image OR swap-chain depth, at most one)
         vk::RenderingAttachmentInfo depthAttachmentInfo{};
-        bool hasDepth = (renderPass.depthTargetImage != nullptr) || renderPass.usesSwapChainDepth;
+        bool hasDepth = (graphicsPass.depthTargetImage != nullptr) || graphicsPass.usesSwapChainDepth;
 
         if (hasDepth)
         {
             vk::ClearValue clearDepth = vk::ClearDepthStencilValue(1.0f, 0);
 
-            if (renderPass.depthTargetImage)
+            if (graphicsPass.depthTargetImage)
             {
-                bool firstUse = clearedImages.insert(renderPass.depthTargetImage).second;
-                depthAttachmentInfo.imageView = renderPass.depthTargetImage->getImageView(m_frameIndex);
+                bool firstUse = clearedImages.insert(graphicsPass.depthTargetImage).second;
+                depthAttachmentInfo.imageView = graphicsPass.depthTargetImage->getImageView(m_frameIndex);
                 depthAttachmentInfo.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
                 depthAttachmentInfo.loadOp = firstUse ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eLoad;
                 depthAttachmentInfo.storeOp = vk::AttachmentStoreOp::eStore;
@@ -362,36 +409,36 @@ void RenderGraph::executeRenderPasses()
         commandBuffer.beginRendering(renderingInfo);
 
         // ---- Bind pipeline ----
-        commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, renderPass.pipeline);
+        commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPass.pipeline);
 
         // ---- Bind descriptor sets ----
-        if (!renderPass.descriptorSets.empty())
+        if (!graphicsPass.descriptorSets.empty())
         {
             commandBuffer.bindDescriptorSets(
                 vk::PipelineBindPoint::eGraphics,
-                renderPass.pipeline.getPipelineLayout(),
+                graphicsPass.pipeline.getPipelineLayout(),
                 0,
-                *renderPass.descriptorSets[m_frameIndex],
+                *graphicsPass.descriptorSets[m_frameIndex],
                 nullptr);
         }
 
         // ---- Draw ----
-        if (renderPass.drawCommandBuffer)
+        if (graphicsPass.drawCommandBuffer)
         {
             // Indexed indirect draw (mesh geometry)
-            if (renderPass.vertexBuffer)
+            if (graphicsPass.vertexBuffer)
             {
-                commandBuffer.bindVertexBuffers(0, renderPass.vertexBuffer->getBuffer(0), { vk::DeviceSize(0) });
+                commandBuffer.bindVertexBuffers(0, graphicsPass.vertexBuffer->getBuffer(0), { vk::DeviceSize(0) });
             }
 
-            if (renderPass.indexBuffer)
+            if (graphicsPass.indexBuffer)
             {
-                commandBuffer.bindIndexBuffer(renderPass.indexBuffer->getBuffer(0), 0, vk::IndexType::eUint32);
+                commandBuffer.bindIndexBuffer(graphicsPass.indexBuffer->getBuffer(0), 0, vk::IndexType::eUint32);
             }
 
-            auto drawCount = static_cast<uint32_t>(renderPass.drawCommandBuffer->getCreateInfo().size / sizeof(vk::DrawIndexedIndirectCommand));
+            auto drawCount = static_cast<uint32_t>(graphicsPass.drawCommandBuffer->getCreateInfo().size / sizeof(vk::DrawIndexedIndirectCommand));
             commandBuffer.drawIndexedIndirect(
-                renderPass.drawCommandBuffer->getBuffer(0),
+                graphicsPass.drawCommandBuffer->getBuffer(0),
                 0,
                 drawCount,
                 static_cast<uint32_t>(sizeof(vk::DrawIndexedIndirectCommand)));
