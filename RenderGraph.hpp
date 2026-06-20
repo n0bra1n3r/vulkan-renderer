@@ -4,20 +4,23 @@
 // - Manages per-frame semaphores and fences
 // - Demonstrates image layout transitions using synchronization2 (pipelineBarrier2 / ImageMemoryBarrier2)
 // - Provides a minimal "pass" API: each pass supplies a record callback that is called with the per-frame command buffer
+// - Provides a higher-level GraphicsPassBuilder API that automates pipeline creation, descriptor set management,
+//   rendering setup, and image layout transitions
 //
-// Usage sketch:
-//   RenderGraph rg(device, swapChain, graphicsQueue, presentQueue, commandPool, swapChainImageViews, swapChainExtent);
-//   rg.addPass("GeometryPass", [](vk::raii::CommandBuffer &cmd, uint32_t imageIndex){ /* record drawing */ }, 
-//              /*transition*/ vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal,
-//              /*src/dst access/stage*/ {}, vk::AccessFlagBits2::eColorAttachmentWrite,
-//              vk::PipelineStageFlagBits2::eTopOfPipe, vk::PipelineStageFlagBits2::eColorAttachmentOutput);
-//   rg.init(); // allocates command buffers and sync objects
+// Usage (new pass-based API):
+//   RenderGraph graph(rhi);
+//   graph.graphicsPass("GBuffer")
+//       .vertexShader("Shaders/gbuffer.vert.spv")
+//       .fragmentShader("Shaders/gbuffer.frag.spv")
+//       .vertexBuffer<Vertex>(vertexBuffer)
+//       .indexBuffer(indexBuffer)
+//       .drawCommandBuffer(drawCommandBuffer)
+//       .allShadersBinding(uniformBuffer)
+//       .renderTarget(gbufferAlbedoImage)
+//       .renderTargetSwapChainDepth()
+//       .build();
 //   // each frame:
-//     rg.executeFrame();
-//
-//
-// Note: this code focuses on synchronization and orchestration. It intentionally avoids higher-level resource/lifetime
-// management (frame graphs with automatic aliasing, barriers across many resources, queue ownership transfers, etc.).
+//     graph.executeFrame();
 
 #pragma once
 
@@ -25,33 +28,32 @@
 
 #include "RHI.hpp"
 #include "Pipeline.hpp"
+#include "DescriptorSet.hpp"
 #include "Image.hpp"
 #include "Buffer.hpp"
 
 namespace Gfx
 {
+    class RenderGraph;
+
     template<typename PipelineCreateInfo>
     class PipelineBuilder
     {
-    public:
-        PipelineBuilder(RHI& rhi) : m_rhi(rhi) {}
-
-        Pipeline build()
-        {
-            auto pipeline = m_rhi.createPipeline(m_pipelineCreateInfo);
-            m_descriptorSetConfig.layout = pipeline.getDescriptorSetLayout();
-            return std::move(pipeline);
-        }
-
-        const DescriptorSetConfig& getDescriptorSetConfig() const
-        {
-            return m_descriptorSetConfig;
-        }
-
     protected:
-        RHI& m_rhi;
+        friend class RenderGraph;
+
+        PipelineBuilder(const std::string& name, vk::Format swapChainColorFormat, vk::Format swapChainDepthFormat) :
+            m_name(name),
+            m_swapChainColorFormat(swapChainColorFormat),
+            m_swapChainDepthFormat(swapChainDepthFormat)
+        {}
+
         PipelineCreateInfo m_pipelineCreateInfo;
-        DescriptorSetConfig m_descriptorSetConfig;
+        std::vector<DescriptorBinding> m_descriptorBindings;
+
+        std::string m_name;
+        vk::Format m_swapChainColorFormat;
+        vk::Format m_swapChainDepthFormat;
     };
 
     class ComputePipelineBuilder : public PipelineBuilder<ComputePipelineCreateInfo>
@@ -100,17 +102,17 @@ namespace Gfx
             }
             else
             {
-                resourceInfos = {{
+                resourceInfos = { {
                     buffer.getBuffer(0),
                     0,
                     createInfo.size,
-                }};
+                } };
             }
 
             descriptorBinding.type = descriptorType;
             descriptorBinding.data = resourceInfos;
 
-            m_descriptorSetConfig.bindings.emplace_back(std::move(descriptorBinding));
+            m_descriptorBindings.emplace_back(std::move(descriptorBinding));
 
             return *this;
         }
@@ -121,6 +123,17 @@ namespace Gfx
     public:
         using PipelineBuilder::PipelineBuilder;
 
+        const Buffer* m_vertexBuffer = nullptr;
+        const Buffer* m_indexBuffer = nullptr;
+        const Buffer* m_drawCommandBuffer = nullptr;
+
+        std::vector<const Image*> m_colorTargetImages;
+        const Image* m_depthTargetImage = nullptr;
+        bool m_usesSwapChainColor = false;
+        bool m_usesSwapChainDepth = false;
+
+        std::vector<const Image*> m_shaderReadImages;
+
         GraphicsPipelineBuilder& vertexShader(std::string name)
         {
             m_pipelineCreateInfo.shaders.emplace_back(name, vk::ShaderStageFlagBits::eVertex);
@@ -128,130 +141,29 @@ namespace Gfx
         }
 
         template<typename T>
-        GraphicsPipelineBuilder& vertexType()
+        GraphicsPipelineBuilder& vertexBuffer(const Buffer& buffer)
         {
             m_pipelineCreateInfo.vertexInputBinding = T::getBindingDescription();
             m_pipelineCreateInfo.vertexInputAttributes = T::getAttributeDescriptions();
+            m_vertexBuffer = &buffer;
+            return *this;
+        }
+
+        GraphicsPipelineBuilder& indexBuffer(const Buffer& buffer)
+        {
+            m_indexBuffer = &buffer;
+            return *this;
+        }
+
+        GraphicsPipelineBuilder& drawCommandBuffer(const Buffer& buffer)
+        {
+            m_drawCommandBuffer = &buffer;
             return *this;
         }
 
         GraphicsPipelineBuilder& fragmentShader(std::string name)
         {
             m_pipelineCreateInfo.shaders.emplace_back(name, vk::ShaderStageFlagBits::eFragment);
-            return *this;
-        }
-
-        GraphicsPipelineBuilder& shaderBinding(std::variant<const std::vector<Image>*, const Image*> images, vk::ShaderStageFlagBits stage, const Sampler& sampler = nullptr)
-        {
-            auto index = static_cast<uint32_t>(m_pipelineCreateInfo.descriptorSetLayoutBindings.size());
-
-            auto descriptorType =
-                sampler.getSampler() != nullptr ? 
-                vk::DescriptorType::eCombinedImageSampler : 
-                vk::DescriptorType::eSampledImage;
-            auto descriptorCount = 
-                std::holds_alternative<const std::vector<Image>*>(images) ? 
-                std::get<const std::vector<Image>*>(images)->size() : 
-                1;
-
-            m_pipelineCreateInfo.descriptorSetLayoutBindings.emplace_back(
-                index,
-                descriptorType,
-                static_cast<uint32_t>(descriptorCount),
-                stage, 
-                nullptr);
-
-            DescriptorBinding descriptorBinding{};
-
-            std::vector<std::vector<vk::DescriptorImageInfo>> resourceInfos{};
-
-            if (descriptorCount == 1)
-            {
-                const auto& image = *std::get<const Image*>(images);
-
-                for (size_t i = 0; i < image.getImages().size(); i++)
-                {
-                    vk::DescriptorImageInfo resourceInfo = {
-                        sampler.getSampler(),
-                        image.getImageView(i),
-                        vk::ImageLayout::eShaderReadOnlyOptimal,
-                    };
-                    resourceInfos.emplace_back(std::vector<vk::DescriptorImageInfo>{ std::move(resourceInfo) });
-                }
-            }
-            else
-            {
-                resourceInfos.resize(1);
-
-                const auto& imageArray = *std::get<const std::vector<Image>*>(images);
-
-                for (const auto& image : imageArray)
-                {
-                    vk::DescriptorImageInfo resourceInfo = {
-                        sampler.getSampler(),
-                        image.getImageView(0),
-                        vk::ImageLayout::eShaderReadOnlyOptimal,
-                    };
-
-                    resourceInfos[0].emplace_back(std::move(resourceInfo));
-                }
-            }
-
-            descriptorBinding.type = descriptorType;
-            descriptorBinding.data = resourceInfos;
-
-            m_descriptorSetConfig.bindings.emplace_back(std::move(descriptorBinding));
-
-            return *this;
-        }
-
-        GraphicsPipelineBuilder& shaderBinding(const Buffer* buffer, vk::ShaderStageFlagBits stage)
-        {
-            auto index = static_cast<uint32_t>(m_pipelineCreateInfo.descriptorSetLayoutBindings.size());
-            const auto& createInfo = buffer->getCreateInfo();
-
-            auto descriptorType =
-                (createInfo.usage & vk::BufferUsageFlagBits::eStorageBuffer) ?
-                vk::DescriptorType::eStorageBuffer :
-                vk::DescriptorType::eUniformBuffer;
-
-            m_pipelineCreateInfo.descriptorSetLayoutBindings.emplace_back(
-                index,
-                descriptorType,
-                1,
-                stage,
-                nullptr);
-
-            DescriptorBinding descriptorBinding{};
-
-            std::vector<vk::DescriptorBufferInfo> resourceInfos{};
-
-            if (descriptorType == vk::DescriptorType::eUniformBuffer)
-            {
-                for (size_t i = 0; i < buffer->getBufferCount(); i++)
-                {
-                    vk::DescriptorBufferInfo resourceInfo = { 
-                        buffer->getBuffer(i),
-                        0,
-                        createInfo.size,
-                    };
-                    resourceInfos.emplace_back(std::move(resourceInfo));
-                }
-            }
-            else
-            {
-                resourceInfos = {{
-                    buffer->getBuffer(0),
-                    0,
-                    createInfo.size,
-                }};
-            }
-
-            descriptorBinding.type = descriptorType;
-            descriptorBinding.data = resourceInfos;
-
-            m_descriptorSetConfig.bindings.emplace_back(std::move(descriptorBinding));
-
             return *this;
         }
 
@@ -283,137 +195,211 @@ namespace Gfx
         GraphicsPipelineBuilder& renderTarget(const Image& image)
         {
             const auto& createInfo = image.getCreateInfo();
- 
+
             if (createInfo.usage & vk::ImageUsageFlagBits::eColorAttachment)
             {
                 m_pipelineCreateInfo.colorAttachments.emplace_back(createInfo.format);
+                m_colorTargetImages.push_back(&image);
             }
             else
             {
                 m_pipelineCreateInfo.depthAttachment = createInfo.format;
+                m_depthTargetImage = &image;
             }
             return *this;
         }
 
         GraphicsPipelineBuilder& renderTargetSwapChainColor()
         {
-            m_pipelineCreateInfo.colorAttachments.emplace_back(m_rhi.getSurfaceFormat());
+            m_pipelineCreateInfo.colorAttachments.emplace_back(m_swapChainColorFormat);
+            m_usesSwapChainColor = true;
             return *this;
         }
 
         GraphicsPipelineBuilder& renderTargetSwapChainDepth()
         {
-            m_pipelineCreateInfo.depthAttachment = m_rhi.getDepthFormat();
+            m_pipelineCreateInfo.depthAttachment = m_swapChainDepthFormat;
+            m_usesSwapChainDepth = true;
+            return *this;
+        }
+
+    private:
+        GraphicsPipelineBuilder& shaderBinding(std::variant<const std::vector<Image>*, const Image*> images, vk::ShaderStageFlagBits stage, const Sampler& sampler = nullptr)
+        {
+            auto index = static_cast<uint32_t>(m_pipelineCreateInfo.descriptorSetLayoutBindings.size());
+
+            auto descriptorType =
+                sampler.getSampler() != nullptr ?
+                vk::DescriptorType::eCombinedImageSampler :
+                vk::DescriptorType::eSampledImage;
+            auto descriptorCount =
+                std::holds_alternative<const std::vector<Image>*>(images) ?
+                std::get<const std::vector<Image>*>(images)->size() :
+                1;
+
+            m_pipelineCreateInfo.descriptorSetLayoutBindings.emplace_back(
+                index,
+                descriptorType,
+                static_cast<uint32_t>(descriptorCount),
+                stage,
+                nullptr);
+
+            DescriptorBinding descriptorBinding{};
+
+            std::vector<std::vector<vk::DescriptorImageInfo>> resourceInfos{};
+
+            if (descriptorCount == 1)
+            {
+                const auto& image = *std::get<const Image*>(images);
+
+                m_shaderReadImages.push_back(&image);
+
+                for (size_t i = 0; i < image.getImages().size(); i++)
+                {
+                    vk::DescriptorImageInfo resourceInfo = {
+                        sampler.getSampler(),
+                        image.getImageView(i),
+                        vk::ImageLayout::eShaderReadOnlyOptimal,
+                    };
+                    resourceInfos.emplace_back(std::vector<vk::DescriptorImageInfo>{ std::move(resourceInfo) });
+                }
+            }
+            else
+            {
+                resourceInfos.resize(1);
+
+                const auto& imageArray = *std::get<const std::vector<Image>*>(images);
+
+                for (const auto& image : imageArray)
+                {
+                    m_shaderReadImages.push_back(&image);
+
+                    vk::DescriptorImageInfo resourceInfo = {
+                        sampler.getSampler(),
+                        image.getImageView(0),
+                        vk::ImageLayout::eShaderReadOnlyOptimal,
+                    };
+
+                    resourceInfos[0].emplace_back(std::move(resourceInfo));
+                }
+            }
+
+            descriptorBinding.type = descriptorType;
+            descriptorBinding.data = resourceInfos;
+
+            m_descriptorBindings.emplace_back(std::move(descriptorBinding));
+
+            return *this;
+        }
+
+        GraphicsPipelineBuilder& shaderBinding(const Buffer* buffer, vk::ShaderStageFlagBits stage)
+        {
+            auto index = static_cast<uint32_t>(m_pipelineCreateInfo.descriptorSetLayoutBindings.size());
+            const auto& createInfo = buffer->getCreateInfo();
+
+            auto descriptorType =
+                (createInfo.usage & vk::BufferUsageFlagBits::eStorageBuffer) ?
+                vk::DescriptorType::eStorageBuffer :
+                vk::DescriptorType::eUniformBuffer;
+
+            m_pipelineCreateInfo.descriptorSetLayoutBindings.emplace_back(
+                index,
+                descriptorType,
+                1,
+                stage,
+                nullptr);
+
+            DescriptorBinding descriptorBinding{};
+
+            std::vector<vk::DescriptorBufferInfo> resourceInfos{};
+
+            if (descriptorType == vk::DescriptorType::eUniformBuffer)
+            {
+                for (size_t i = 0; i < buffer->getBufferCount(); i++)
+                {
+                    vk::DescriptorBufferInfo resourceInfo = {
+                        buffer->getBuffer(i),
+                        0,
+                        createInfo.size,
+                    };
+                    resourceInfos.emplace_back(std::move(resourceInfo));
+                }
+            }
+            else
+            {
+                resourceInfos = { {
+                    buffer->getBuffer(0),
+                    0,
+                    createInfo.size,
+                } };
+            }
+
+            descriptorBinding.type = descriptorType;
+            descriptorBinding.data = resourceInfos;
+
+            m_descriptorBindings.emplace_back(std::move(descriptorBinding));
+
             return *this;
         }
     };
 
-    struct RenderPassNode
+    // ---- Render pass data stored by the render graph ----
+
+    struct ComputePass
     {
-        // Human-readable name (for students / debugging)
         std::string name;
+        Pipeline pipeline;
+        std::vector<DescriptorSet> descriptorSets;
+    };
 
-        // Record callback: receives RAII command buffer and acquired image index
-        // The callback must record commands into the provided command buffer.
-        using RecordFunc = std::function<void(vk::raii::CommandBuffer&, uint32_t)>;
-        RecordFunc recordFunc;
-
-        struct AttachmentTransitionInfo
-        {
-            std::vector<vk::Image> images; // images to transition (e.g. swapchain image for color, depth image for depth)
-            vk::ImageAspectFlagBits aspectMask; // aspect of the image to transition (e.g. color, depth, stencil)
-
-            // Simple image-layout transition requirements for the attachments used by the pass.
-            // If no transition is needed, set oldLayout == newLayout.
-            vk::ImageLayout oldLayout = vk::ImageLayout::eUndefined;
-            vk::ImageLayout newLayout = vk::ImageLayout::eUndefined;
-
-            // Access & stage masks for the barrier that moves image from oldLayout->newLayout
-            vk::AccessFlags2 srcAccessMask = {};
-            vk::AccessFlags2 dstAccessMask = {};
-            vk::PipelineStageFlags2 srcStageMask = {};
-            vk::PipelineStageFlags2 dstStageMask = {};
-        };
-
-        struct BufferTransitionInfo
-        {
-            std::vector<vk::Buffer> buffers; // buffers to transition (e.g. uniform buffer, storage buffer)
-
-            vk::AccessFlags2 srcAccessMask = {};
-            vk::AccessFlags2 dstAccessMask = {};
-            vk::PipelineStageFlags2 srcStageMask = {};
-            vk::PipelineStageFlags2 dstStageMask = {};
-		};
-
-        std::vector<AttachmentTransitionInfo> attachmentInfos;
-        std::vector<BufferTransitionInfo> bufferInfos;
+    struct GraphicsPass
+    {
+        std::string name;
+        Pipeline pipeline;
+        std::vector<DescriptorSet> descriptorSets;
+        const Buffer* vertexBuffer;
+        const Buffer* indexBuffer;
+        const Buffer* drawCommandBuffer;
+        std::vector<const Image*> colorTargetImages;
+        const Image* depthTargetImage;
+        bool usesSwapChainColor;
+        bool usesSwapChainDepth;
+        std::vector<const Image*> shaderReadImages;
     };
 
     class RenderGraph
     {
     public:
-        // Construct with references to objects managed elsewhere (HelloTriangleApplication keeps lifetime)
-        RenderGraph(RHI& rhi);
+        RenderGraph(RHI& rhi) : m_rhi(rhi) {}
         RenderGraph(const RenderGraph&) = delete;
 
-        // Add a render pass node. Nodes are executed in the order they are added.
-        void addPass(const RenderPassNode& node) { m_passes.push_back(node); }
+        GraphicsPipelineBuilder& graphicsPass(const std::string& name)
+        {
+            m_pipelineBuilders.emplace_back(GraphicsPipelineBuilder(name, m_rhi.getSurfaceFormat(), m_rhi.getDepthFormat()));
+            return m_pipelineBuilders.back();
+        }
 
         // Initialize per-frame resources (command buffers, semaphores, fences).
         // Must be called after creating swapchain and image views.
         void init();
 
         // Execute full frame: acquire, record each pass, submit, present.
-        // This implementation uses a single submit of the full set of recorded command buffers
-        // and the classic SubmitInfo with semaphores and a fence. Image transitions inside passes
-        // use pipelineBarrier2 (ImageMemoryBarrier2 + DependencyInfo).
+        // When compiled passes are registered (via graphicsPass().build()), they are executed
+        // with automatic image layout transitions. Otherwise, legacy RenderPassNode passes are used.
         void executeFrame();
 
-        ComputePipelineBuilder& computePipeline()
-        {
-            m_builders.emplace_back(ComputePipelineBuilder(m_rhi));
-            return std::get<ComputePipelineBuilder>(m_builders.back());
-        }
-
-        GraphicsPipelineBuilder& graphicsPipeline()
-        {
-            m_builders.emplace_back(GraphicsPipelineBuilder(m_rhi));
-            return std::get<GraphicsPipelineBuilder>(m_builders.back());
-        }
-
-        template<typename T>
-        T buildDescriptorSets()
-        {
-            std::vector<DescriptorSetConfig> configs;
-
-            for (const auto& builder : m_builders)
-            {
-                auto config = std::holds_alternative<ComputePipelineBuilder>(builder) ?
-                    std::get<ComputePipelineBuilder>(builder).getDescriptorSetConfig() :
-                    std::get<GraphicsPipelineBuilder>(builder).getDescriptorSetConfig();
-
-                configs.emplace_back(std::move(config));
-            }
-
-            auto descriptorSets = m_rhi.createDescriptorSets(configs);
-
-            T container;
-            auto* containerPtr = reinterpret_cast<std::vector<DescriptorSet>*>(&container);
-            for (auto& descriptorSetArray : descriptorSets)
-            {
-                ::new (static_cast<void*>(containerPtr)) std::vector<DescriptorSet>(std::move(descriptorSetArray));
-                containerPtr += 1;
-            }
-            return std::move(container);
-        }
+        uint64_t getFrameIndex() const { return m_frameIndex; }
 
     private:
-		RHI& m_rhi;
+        void executeRenderPasses();
 
-        // recorded passes
-        std::vector<RenderPassNode> m_passes;
+    private:
+        RHI& m_rhi;
 
-        // per-swapchain-image command buffers (RAII)
+        std::vector<GraphicsPass> m_renderPasses;
+
+        std::vector<GraphicsPipelineBuilder> m_pipelineBuilders;
+
         std::vector<vk::raii::CommandBuffer> m_commandBuffers;
 
         // per-frame synchronization objects
@@ -421,8 +407,6 @@ namespace Gfx
         std::vector<vk::raii::Semaphore> m_renderFinishedSemaphores;
         std::vector<vk::raii::Fence> m_inFlightFences;
 
-        uint64_t m_currentFrame = 0;
-
-        std::vector<std::variant<ComputePipelineBuilder, GraphicsPipelineBuilder>> m_builders;
+        uint64_t m_frameIndex = 0;
     };
 }
