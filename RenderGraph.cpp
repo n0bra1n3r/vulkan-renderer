@@ -15,14 +15,14 @@ void RenderGraph::init()
             const auto& computeBuilder = std::get<ComputePipelineBuilder>(builder);
 
             auto pipeline = m_rhi.createPipeline(computeBuilder.m_pipelineCreateInfo);
-            auto descriptorSetsVec = m_rhi.createDescriptorSets({ { pipeline.getDescriptorSetLayout(), computeBuilder.m_descriptorBindings } });
+            auto descriptorSets = m_rhi.createDescriptorSets(pipeline.getDescriptorSetLayout(), computeBuilder.m_descriptorBindings);
 
             m_renderPasses.emplace_back(ComputePass{
                 std::move(computeBuilder.m_name),
                 computeBuilder.m_minDispatchThreadCount,
                 std::move(pipeline),
-                std::move(descriptorSetsVec[0]),
-             });
+                std::move(descriptorSets),
+            });
 
             continue;
         }
@@ -30,12 +30,12 @@ void RenderGraph::init()
         const auto& graphicsBuilder = std::get<GraphicsPipelineBuilder>(builder);
 
         auto pipeline = m_rhi.createPipeline(graphicsBuilder.m_pipelineCreateInfo);
-        auto descriptorSetsVec = m_rhi.createDescriptorSets({ { pipeline.getDescriptorSetLayout(), graphicsBuilder.m_descriptorBindings } });
+        auto descriptorSets = m_rhi.createDescriptorSets(pipeline.getDescriptorSetLayout(), graphicsBuilder.m_descriptorBindings);
 
         m_renderPasses.emplace_back(GraphicsPass{
             std::move(graphicsBuilder.m_name),
             std::move(pipeline),
-            std::move(descriptorSetsVec[0]),
+            std::move(descriptorSets),
             graphicsBuilder.m_vertexBuffer,
             graphicsBuilder.m_indexBuffer,
             graphicsBuilder.m_drawCommandBuffer,
@@ -44,7 +44,7 @@ void RenderGraph::init()
             graphicsBuilder.m_usesSwapChainColor,
             graphicsBuilder.m_usesSwapChainDepth,
             std::move(graphicsBuilder.m_shaderReadImages),
-            });
+        });
     }
 
     m_pipelineBuilders.clear();
@@ -163,71 +163,76 @@ void RenderGraph::executeRenderPasses()
         vk::Image image,
         vk::ImageLayout oldLayout,
         vk::ImageLayout newLayout,
-        vk::ImageAspectFlags aspect)
+        vk::ImageAspectFlags aspectFlags)
+    {
+        vk::ImageMemoryBarrier2 barrier{};
+        barrier.oldLayout = oldLayout;
+        barrier.newLayout = newLayout;
+        barrier.image = image;
+        barrier.subresourceRange.aspectMask = aspectFlags;
+        barrier.subresourceRange.levelCount = 1;
+        barrier.subresourceRange.layerCount = 1;
+
+        // Source access / stage (what produced the previous content)
+        switch (oldLayout)
         {
-            vk::ImageMemoryBarrier2 barrier{};
-            barrier.oldLayout = oldLayout;
-            barrier.newLayout = newLayout;
-            barrier.image = image;
-            barrier.subresourceRange.aspectMask = aspect;
-            barrier.subresourceRange.levelCount = 1;
-            barrier.subresourceRange.layerCount = 1;
+        case vk::ImageLayout::eUndefined:
+            barrier.srcAccessMask = {};
+            barrier.srcStageMask = (aspectFlags & vk::ImageAspectFlagBits::eDepth)
+                ? (vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests)
+                : vk::PipelineStageFlagBits2::eTopOfPipe;
+            break;
+        case vk::ImageLayout::eColorAttachmentOptimal:
+            barrier.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
+            barrier.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+            break;
+        case vk::ImageLayout::eDepthAttachmentOptimal:
+            barrier.srcAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+            barrier.srcStageMask = vk::PipelineStageFlagBits2::eLateFragmentTests;
+            break;
+        case vk::ImageLayout::eShaderReadOnlyOptimal:
+            barrier.srcAccessMask = vk::AccessFlagBits2::eShaderRead;
+            barrier.srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+            break;
+        default:
+            break;
+        }
 
-            // Source access / stage (what produced the previous content)
-            switch (oldLayout)
+        // Destination access / stage (what will consume the image next)
+        switch (newLayout)
+        {
+        case vk::ImageLayout::eColorAttachmentOptimal:
+            barrier.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
+            if (oldLayout == newLayout) // WAW hazard - also need read for blending
             {
-            case vk::ImageLayout::eUndefined:
-                barrier.srcAccessMask = {};
-                barrier.srcStageMask = (aspect & vk::ImageAspectFlagBits::eDepth)
-                    ? (vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests)
-                    : vk::PipelineStageFlagBits2::eTopOfPipe;
-                break;
-            case vk::ImageLayout::eColorAttachmentOptimal:
-                barrier.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
-                barrier.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
-                break;
-            case vk::ImageLayout::eDepthAttachmentOptimal:
-                barrier.srcAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
-                barrier.srcStageMask = vk::PipelineStageFlagBits2::eLateFragmentTests;
-                break;
-            case vk::ImageLayout::eShaderReadOnlyOptimal:
-                barrier.srcAccessMask = vk::AccessFlagBits2::eShaderRead;
-                barrier.srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
-                break;
-            default:
-                break;
+                barrier.dstAccessMask |= vk::AccessFlagBits2::eColorAttachmentRead;
             }
-
-            // Destination access / stage (what will consume the image next)
-            switch (newLayout)
+            barrier.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+            break;
+        case vk::ImageLayout::eDepthAttachmentOptimal:
+            barrier.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+            if (oldLayout == newLayout)
             {
-            case vk::ImageLayout::eColorAttachmentOptimal:
-                barrier.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
-                if (oldLayout == newLayout) // WAW hazard - also need read for blending
-                    barrier.dstAccessMask |= vk::AccessFlagBits2::eColorAttachmentRead;
-                barrier.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
-                break;
-            case vk::ImageLayout::eDepthAttachmentOptimal:
-                barrier.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
-                if (oldLayout == newLayout)
-                    barrier.dstAccessMask |= vk::AccessFlagBits2::eDepthStencilAttachmentRead;
-                barrier.dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests
-                    | vk::PipelineStageFlagBits2::eLateFragmentTests;
-                break;
-            case vk::ImageLayout::eShaderReadOnlyOptimal:
-                barrier.dstAccessMask = vk::AccessFlagBits2::eShaderRead;
-                barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
-                break;
-            case vk::ImageLayout::ePresentSrcKHR:
-                barrier.dstAccessMask = {};
-                barrier.dstStageMask = vk::PipelineStageFlagBits2::eBottomOfPipe;
-                break;
-            default:
-                break;
+                barrier.dstAccessMask |= vk::AccessFlagBits2::eDepthStencilAttachmentRead;
             }
+            barrier.dstStageMask = 
+                vk::PipelineStageFlagBits2::eEarlyFragmentTests | 
+                vk::PipelineStageFlagBits2::eLateFragmentTests;
+            break;
+        case vk::ImageLayout::eShaderReadOnlyOptimal:
+            barrier.dstAccessMask = vk::AccessFlagBits2::eShaderRead;
+            barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+            break;
+        case vk::ImageLayout::ePresentSrcKHR:
+            barrier.dstAccessMask = {};
+            barrier.dstStageMask = vk::PipelineStageFlagBits2::eBottomOfPipe;
+            break;
+        default:
+            break;
+        }
 
-            barriers.push_back(barrier);
-        };
+        barriers.push_back(barrier);
+    };
 
     const auto& commandBuffer = m_commandBuffers[m_frameIndex];
 
@@ -262,27 +267,31 @@ void RenderGraph::executeRenderPasses()
         std::vector<vk::ImageMemoryBarrier2> barriers{};
 
         // ---- 1. Shader-read transitions (render targets from earlier passes) ----
-        for (const auto* img : graphicsPass.shaderReadImages)
+        for (const auto* image : graphicsPass.shaderReadImages)
         {
-            auto it = imageLayouts.find(img);
+            auto it = imageLayouts.find(image);
             if (it != imageLayouts.end() && it->second != vk::ImageLayout::eShaderReadOnlyOptimal)
             {
-                bool isDepth = !!(img->getCreateInfo().usage & vk::ImageUsageFlagBits::eDepthStencilAttachment);
-                vk::ImageAspectFlags aspect = isDepth
-                    ? vk::ImageAspectFlags(vk::ImageAspectFlagBits::eDepth)
-                    : vk::ImageAspectFlags(vk::ImageAspectFlagBits::eColor);
-                addImageBarrier(barriers, img->getImages()[m_frameIndex],
-                    it->second, vk::ImageLayout::eShaderReadOnlyOptimal, aspect);
+                bool isDepth = !!(image->getCreateInfo().usage & vk::ImageUsageFlagBits::eDepthStencilAttachment);
+                auto aspectFlags = isDepth ? vk::ImageAspectFlagBits::eDepth : vk::ImageAspectFlagBits::eColor;
+                addImageBarrier(
+                    barriers, 
+                    image->getImage(m_frameIndex),
+                    it->second, 
+                    vk::ImageLayout::eShaderReadOnlyOptimal, 
+                    aspectFlags);
                 it->second = vk::ImageLayout::eShaderReadOnlyOptimal;
             }
             // Images NOT in the tracking map are static textures - no barrier needed.
         }
 
         // ---- 2. Color render-target transitions ----
-        for (const auto* img : graphicsPass.colorTargetImages)
+        for (const auto* image : graphicsPass.colorTargetImages)
         {
-            auto& layout = imageLayouts[img];
-            addImageBarrier(barriers, img->getImages()[m_frameIndex],
+            auto& layout = imageLayouts[image];
+            addImageBarrier(
+                barriers, 
+                image->getImage(m_frameIndex),
                 layout, vk::ImageLayout::eColorAttachmentOptimal,
                 vk::ImageAspectFlagBits::eColor);
             layout = vk::ImageLayout::eColorAttachmentOptimal;
@@ -292,8 +301,11 @@ void RenderGraph::executeRenderPasses()
         if (graphicsPass.depthTargetImage)
         {
             auto& layout = imageLayouts[graphicsPass.depthTargetImage];
-            addImageBarrier(barriers, graphicsPass.depthTargetImage->getImages()[m_frameIndex],
-                layout, vk::ImageLayout::eDepthAttachmentOptimal,
+            addImageBarrier(
+                barriers, 
+                graphicsPass.depthTargetImage->getImage(m_frameIndex),
+                layout, 
+                vk::ImageLayout::eDepthAttachmentOptimal,
                 vk::ImageAspectFlagBits::eDepth);
             layout = vk::ImageLayout::eDepthAttachmentOptimal;
         }
@@ -302,8 +314,11 @@ void RenderGraph::executeRenderPasses()
         if (graphicsPass.usesSwapChainColor)
         {
             anyPassUsedSwapChainColor = true;
-            addImageBarrier(barriers, m_rhi.getSwapChainImages()[m_frameIndex],
-                swapChainColorLayout, vk::ImageLayout::eColorAttachmentOptimal,
+            addImageBarrier(
+                barriers, 
+                m_rhi.getSwapChainImage(m_frameIndex),
+                swapChainColorLayout, 
+                vk::ImageLayout::eColorAttachmentOptimal,
                 vk::ImageAspectFlagBits::eColor);
             swapChainColorLayout = vk::ImageLayout::eColorAttachmentOptimal;
         }
@@ -311,8 +326,11 @@ void RenderGraph::executeRenderPasses()
         // ---- 5. Swap-chain depth transition ----
         if (graphicsPass.usesSwapChainDepth)
         {
-            addImageBarrier(barriers, m_rhi.getDepthImages()[m_frameIndex],
-                swapChainDepthLayout, vk::ImageLayout::eDepthAttachmentOptimal,
+            addImageBarrier(
+                barriers, 
+                m_rhi.getDepthImage(m_frameIndex),
+                swapChainDepthLayout, 
+                vk::ImageLayout::eDepthAttachmentOptimal,
                 vk::ImageAspectFlagBits::eDepth);
             swapChainDepthLayout = vk::ImageLayout::eDepthAttachmentOptimal;
         }
@@ -343,11 +361,11 @@ void RenderGraph::executeRenderPasses()
         vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
         std::vector<vk::RenderingAttachmentInfo> colorAttachmentInfos;
 
-        for (const auto* img : graphicsPass.colorTargetImages)
+        for (const auto* image : graphicsPass.colorTargetImages)
         {
-            bool firstUse = clearedImages.insert(img).second;
+            bool firstUse = clearedImages.insert(image).second;
             vk::RenderingAttachmentInfo info{};
-            info.imageView = img->getImageView(m_frameIndex);
+            info.imageView = image->getImageView(m_frameIndex);
             info.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
             info.loadOp = firstUse ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eLoad;
             info.storeOp = vk::AttachmentStoreOp::eStore;
@@ -404,7 +422,9 @@ void RenderGraph::executeRenderPasses()
         renderingInfo.colorAttachmentCount = static_cast<uint32_t>(colorAttachmentInfos.size());
         renderingInfo.pColorAttachments = colorAttachmentInfos.data();
         if (hasDepth)
+        {
             renderingInfo.pDepthAttachment = &depthAttachmentInfo;
+        }
 
         commandBuffer.beginRendering(renderingInfo);
 
@@ -463,7 +483,7 @@ void RenderGraph::executeRenderPasses()
         presentBarrier.dstAccessMask = {};
         presentBarrier.oldLayout = vk::ImageLayout::eColorAttachmentOptimal;
         presentBarrier.newLayout = vk::ImageLayout::ePresentSrcKHR;
-        presentBarrier.image = m_rhi.getSwapChainImages()[m_frameIndex];
+        presentBarrier.image = m_rhi.getSwapChainImage(m_frameIndex);
         presentBarrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
         presentBarrier.subresourceRange.levelCount = 1;
         presentBarrier.subresourceRange.layerCount = 1;

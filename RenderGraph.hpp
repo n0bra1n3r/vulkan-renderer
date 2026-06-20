@@ -251,7 +251,7 @@ namespace Gfx
 
                 m_shaderReadImages.push_back(&image);
 
-                for (size_t i = 0; i < image.getImages().size(); i++)
+                for (size_t i = 0; i < image.getImageCount(); i++)
                 {
                     vk::DescriptorImageInfo resourceInfo = {
                         sampler.getSampler(),

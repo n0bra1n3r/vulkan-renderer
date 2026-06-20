@@ -416,9 +416,9 @@ void RHI::initSwapChain(void* window) {
 
     m_swapChain = vk::raii::SwapchainKHR(m_device, swapChainCreateInfo);
 
-    auto swapChainImages = m_swapChain.getImages();
+    m_swapChainImages = m_swapChain.getImages();
 
-    m_maxFramesInFlight = static_cast<uint8_t>(swapChainImages.size());
+    m_maxFramesInFlight = static_cast<uint8_t>(m_swapChainImages.size());
 
     vk::ImageViewCreateInfo imageViewCreateInfo{};
     imageViewCreateInfo.viewType = vk::ImageViewType::e2D;
@@ -428,7 +428,7 @@ void RHI::initSwapChain(void* window) {
     imageViewCreateInfo.subresourceRange.levelCount = 1;
     imageViewCreateInfo.subresourceRange.layerCount = 1;
 
-    for (auto image : swapChainImages) {
+    for (auto image : m_swapChainImages) {
         imageViewCreateInfo.image = image;
         m_swapChainImageViews.emplace_back(m_device, imageViewCreateInfo);
     }
@@ -628,11 +628,11 @@ void RHI::updateImage(const Gfx::Image& image, const void* contentData, size_t c
     vk::BufferImageCopy region{};
     region.imageSubresource = { vk::ImageAspectFlagBits::eColor, 0, 0, 1 };
     region.imageExtent = image.m_createInfo.extent;
-    for (const auto& rawImage : image.getImages())
+    for (size_t i = 0; i < image.getImageCount(); i++)
     {
-        transitionImageLayout(commandCopyBuffer, rawImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
-        commandCopyBuffer.copyBufferToImage(stagingBuffer.getBuffer(0), rawImage, vk::ImageLayout::eTransferDstOptimal, {region});
-        transitionImageLayout(commandCopyBuffer, rawImage, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+        transitionImageLayout(commandCopyBuffer, image.getImage(i), vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
+        commandCopyBuffer.copyBufferToImage(stagingBuffer.getBuffer(0), image.getImage(i), vk::ImageLayout::eTransferDstOptimal, { region });
+        transitionImageLayout(commandCopyBuffer, image.getImage(i), vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
     }
     commandCopyBuffer.end();
 
@@ -794,24 +794,21 @@ Gfx::Pipeline RHI::createPipeline(const Gfx::ComputePipelineCreateInfo& createIn
     return Gfx::Pipeline(std::move(pipeline), std::move(pipelineLayout), std::move(descriptorSetLayout));
 }
 
-std::vector<std::vector<Gfx::DescriptorSet>> RHI::createDescriptorSets(const std::vector<Gfx::DescriptorSetConfig>& configs)
+std::vector<Gfx::DescriptorSet> RHI::createDescriptorSets(const vk::DescriptorSetLayout& layout, const std::vector<Gfx::DescriptorBinding>& bindings)
 {
     std::unordered_map<vk::DescriptorType, uint32_t> typeCounts{};
 
-    for (const auto& config : configs)
+    for (const auto& binding : bindings)
     {
-        for (const auto& binding : config.bindings)
+        uint32_t count = m_maxFramesInFlight;
+        if (!std::holds_alternative<std::vector<vk::DescriptorBufferInfo>>(binding.data))
         {
-            uint32_t count = m_maxFramesInFlight;
-            if (!std::holds_alternative<std::vector<vk::DescriptorBufferInfo>>(binding.data))
-            {
-                const auto& perFrameImages =
-                    std::get<std::vector<std::vector<vk::DescriptorImageInfo>>>(binding.data);
-                auto imagesPerSet = static_cast<uint32_t>(perFrameImages[0].size());
-                count *= imagesPerSet;
-            }
-            typeCounts[binding.type] += count;
+            const auto& perFrameImages =
+                std::get<std::vector<std::vector<vk::DescriptorImageInfo>>>(binding.data);
+            auto imagesPerSet = static_cast<uint32_t>(perFrameImages[0].size());
+            count *= imagesPerSet;
         }
+        typeCounts[binding.type] += count;
     }
 
     std::vector<vk::DescriptorPoolSize> poolSizes{};
@@ -824,87 +821,74 @@ std::vector<std::vector<Gfx::DescriptorSet>> RHI::createDescriptorSets(const std
 
     vk::DescriptorPoolCreateInfo poolInfo{};
     poolInfo.flags         = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-    poolInfo.maxSets       = static_cast<uint32_t>(configs.size() * m_maxFramesInFlight);
+    poolInfo.maxSets       = static_cast<uint32_t>(m_maxFramesInFlight);
     poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     poolInfo.pPoolSizes    = poolSizes.data();
 
     auto pool = std::make_shared<vk::raii::DescriptorPool>(m_device, poolInfo);
 
-    std::vector<std::vector<Gfx::DescriptorSet>> descriptorSetsArray{};
-    descriptorSetsArray.reserve(configs.size());
+    std::vector<vk::DescriptorSetLayout> layouts(m_maxFramesInFlight, layout);
 
-    for (const auto& config : configs)
+    vk::DescriptorSetAllocateInfo allocInfo{};
+    allocInfo.descriptorPool     = *pool;
+    allocInfo.descriptorSetCount = m_maxFramesInFlight;
+    allocInfo.pSetLayouts        = layouts.data();
+
+    std::vector<Gfx::DescriptorSet> descriptorSets{};
+    descriptorSets.reserve(m_maxFramesInFlight);
+
+    auto sets = m_device.allocateDescriptorSets(allocInfo);
+    for (auto& set : sets)
     {
-        std::vector<vk::DescriptorSetLayout> layouts(m_maxFramesInFlight, config.layout);
+        auto descriptorSet = DescriptorSet(pool, std::move(set));
 
-        vk::DescriptorSetAllocateInfo allocInfo{};
-        allocInfo.descriptorPool     = *pool;
-        allocInfo.descriptorSetCount = m_maxFramesInFlight;
-        allocInfo.pSetLayouts        = layouts.data();
-
-        std::vector<Gfx::DescriptorSet> descriptorSets{};
-        descriptorSets.reserve(m_maxFramesInFlight);
-
-        auto sets = m_device.allocateDescriptorSets(allocInfo);
-        for (auto& set : sets)
-        {
-            auto descriptorSet = DescriptorSet(pool, std::move(set));
-
-            descriptorSets.emplace_back(std::move(descriptorSet));
-        }
-
-        descriptorSetsArray.emplace_back(std::move(descriptorSets));
+        descriptorSets.emplace_back(std::move(descriptorSet));
     }
 
-    for (size_t j = 0; j < configs.size(); ++j)
+    for (uint32_t i = 0; i < m_maxFramesInFlight; ++i)
     {
-        const auto& config = configs[j];
+        vk::DescriptorSet dstSet = *descriptorSets[i];
 
-        for (uint32_t i = 0; i < m_maxFramesInFlight; ++i)
+        for (size_t j = 0; j < bindings.size(); ++j)
         {
-            vk::DescriptorSet dstSet = *descriptorSetsArray[j][i];
+            const auto& binding = bindings[j];
 
-            for (size_t h = 0; h < config.bindings.size(); ++h)
+            vk::WriteDescriptorSet write{};
+            write.dstSet = dstSet;
+            write.dstBinding = static_cast<uint32_t>(j);
+            write.dstArrayElement = 0;
+            write.descriptorType = binding.type;
+
+            if (std::holds_alternative<std::vector<vk::DescriptorBufferInfo>>(binding.data))
             {
-                const auto& binding = config.bindings[h];
+                const auto& bufInfos =
+                    std::get<std::vector<vk::DescriptorBufferInfo>>(binding.data);
+                if (bufInfos.empty()) continue;
+                // Use per-frame entry if available, otherwise fall back to index 0.
+                const vk::DescriptorBufferInfo& bufInfo =
+                    (i < bufInfos.size()) ? bufInfos[i] : bufInfos[0];
 
-                vk::WriteDescriptorSet write{};
-                write.dstSet = dstSet;
-                write.dstBinding = static_cast<uint32_t>(h);
-                write.dstArrayElement = 0;
-                write.descriptorType = binding.type;
-
-                if (std::holds_alternative<std::vector<vk::DescriptorBufferInfo>>(binding.data))
-                {
-                    const auto& bufInfos =
-                        std::get<std::vector<vk::DescriptorBufferInfo>>(binding.data);
-                    if (bufInfos.empty()) continue;
-                    // Use per-frame entry if available, otherwise fall back to index 0.
-                    const vk::DescriptorBufferInfo& bufInfo =
-                        (i < bufInfos.size()) ? bufInfos[i] : bufInfos[0];
-
-                    write.descriptorCount = 1;
-                    write.pBufferInfo = &bufInfo;
-                }
-                else
-                {
-                    const auto& perFrameImages =
-                        std::get<std::vector<std::vector<vk::DescriptorImageInfo>>>(binding.data);
-                    if (perFrameImages.empty()) continue;
-                    // Use per-frame entry if available, otherwise fall back to index 0.
-                    const std::vector<vk::DescriptorImageInfo>& imgInfos =
-                        (i < perFrameImages.size()) ? perFrameImages[i] : perFrameImages[0];
-
-                    write.descriptorCount = static_cast<uint32_t>(imgInfos.size());
-                    write.pImageInfo = imgInfos.data();
-                }
-
-                m_device.updateDescriptorSets(write, {});
+                write.descriptorCount = 1;
+                write.pBufferInfo = &bufInfo;
             }
+            else
+            {
+                const auto& perFrameImages =
+                    std::get<std::vector<std::vector<vk::DescriptorImageInfo>>>(binding.data);
+                if (perFrameImages.empty()) continue;
+                // Use per-frame entry if available, otherwise fall back to index 0.
+                const std::vector<vk::DescriptorImageInfo>& imgInfos =
+                    (i < perFrameImages.size()) ? perFrameImages[i] : perFrameImages[0];
+
+                write.descriptorCount = static_cast<uint32_t>(imgInfos.size());
+                write.pImageInfo = imgInfos.data();
+            }
+
+            m_device.updateDescriptorSets(write, {});
         }
     }
 
-    return descriptorSetsArray;
+    return descriptorSets;
 }
 
 void RHI::presentSwapChainImage(uint32_t imageIndex, const vk::SubmitInfo& submitInfo, const vk::Fence& inFlightFence) const

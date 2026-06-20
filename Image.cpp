@@ -12,16 +12,8 @@ Image::Image(
     m_images(std::move(images)),
     m_imageMemories(std::move(imageMemories)),
 	m_imageViews(std::move(imageViews))
-{
-    m_rawImages.reserve(m_images.size());
-
-    for (const auto& image : m_images)
-    {
-        m_rawImages.emplace_back(*image);
-    }
-}
+{}
 
 Sampler::Sampler(const vk::SamplerCreateInfo& createInfo, vk::raii::Sampler&& sampler):
     m_sampler(std::move(sampler))
-{
-}
+{}

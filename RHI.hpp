@@ -37,12 +37,6 @@ namespace Gfx
 		> data;
 	};
 
-	struct DescriptorSetConfig
-	{
-		vk::DescriptorSetLayout layout;
-		std::vector<DescriptorBinding> bindings;
-	};
-
 	class RHI
 	{
 	public:
@@ -57,8 +51,8 @@ namespace Gfx
 		const vk::raii::CommandPool& getCommandPool() const { return m_commandPool; }
 		vk::Format getSurfaceFormat() const { return m_surfaceFormat.format; }
 		vk::Format getDepthFormat() const { return m_depthFormat; }
-		std::vector<vk::Image> getSwapChainImages() const { return m_swapChain.getImages(); }
-		std::vector<vk::Image> getDepthImages() const { return m_depthImage.getImages(); }
+		vk::Image getSwapChainImage(int index) const { return m_swapChainImages[index]; }
+		const vk::Image& getDepthImage(int index) const { return m_depthImage.getImage(index); }
 		const vk::ImageView& getSwapChainImageView(int index) const { return *m_swapChainImageViews[index]; }
 		const vk::ImageView& getDepthImageView(int index) const { return m_depthImage.getImageView(index); }
 		vk::Extent2D getSwapChainExtent() const { return m_swapChainExtent; }
@@ -76,16 +70,7 @@ namespace Gfx
 		Pipeline createPipeline(const GraphicsPipelineCreateInfo& createInfo);
 		Pipeline createPipeline(const ComputePipelineCreateInfo& createInfo);
 
-		std::vector<std::vector<DescriptorSet>> createDescriptorSets(const std::vector<DescriptorSetConfig>& configs);
-
-		template<int S>
-		std::array<std::vector<DescriptorSet>, S> createDescriptorSets(const std::array<DescriptorSetConfig, S>& configs)
-		{
-			auto sets = createDescriptorSets(std::vector<DescriptorSetConfig>(configs.begin(), configs.end()));
-			std::array<std::vector<DescriptorSet>, S> result{};
-			std::move(sets.begin(), sets.end(), result.begin());
-			return result;
-		}
+		std::vector<DescriptorSet> createDescriptorSets(const vk::DescriptorSetLayout& layout, const std::vector<DescriptorBinding>& bindings);
 
 		template<typename T>
 		Buffer createBuffer(const vk::BufferCreateInfo& bufferInfo, const T& data, vk::MemoryPropertyFlags memProperties = vk::MemoryPropertyFlagBits::eDeviceLocal) {
@@ -136,6 +121,7 @@ namespace Gfx
 		vk::Extent2D m_swapChainExtent{};
 		vk::raii::SwapchainKHR m_swapChain = nullptr;
 		uint8_t m_maxFramesInFlight = 0;
+		std::vector<vk::Image> m_swapChainImages{};
 		std::vector<vk::raii::ImageView> m_swapChainImageViews{};
 		vk::Format m_depthFormat{};
 		Gfx::Image m_depthImage = nullptr;

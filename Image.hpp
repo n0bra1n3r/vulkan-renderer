@@ -22,14 +22,14 @@ namespace Gfx
 
         const vk::ImageCreateInfo& getCreateInfo() const { return m_createInfo; }
 		const vk::ImageView& getImageView(int index) const { return *m_imageViews[index]; }
-        const std::vector<vk::Image>& getImages() const { return m_rawImages; }
+        const vk::Image& getImage(int index) const { return *m_images[index]; }
+        size_t getImageCount() const { return m_images.size(); }
 
     private:
         vk::ImageCreateInfo m_createInfo;
         std::vector<vk::raii::Image> m_images;
         std::vector<vk::raii::DeviceMemory> m_imageMemories;
         std::vector<vk::raii::ImageView> m_imageViews;
-        std::vector<vk::Image> m_rawImages;
     };
 
     class Sampler
