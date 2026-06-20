@@ -537,19 +537,10 @@ private:
     void createTextureResources() {
 		textureImages.reserve(textures.size());
 
-        vk::ImageCreateInfo imageInfo{};
-        imageInfo.imageType = vk::ImageType::e2D;
-        imageInfo.format = vk::Format::eR8G8B8A8Srgb;
-        imageInfo.extent.depth = 1;
-        imageInfo.mipLevels = 1;
-        imageInfo.arrayLayers = 1;
-        imageInfo.usage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled;
-
         for (auto& texture : textures) {
-            imageInfo.extent.width = texture.width;
-            imageInfo.extent.height = texture.height;
-
-			auto textureImage = rhi.createImage(imageInfo);
+			auto textureImage = rhi.createImage2D(vk::Format::eR8G8B8A8Srgb, 
+                vk::Extent2D(texture.width, texture.height),
+                vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled);
 
             rhi.updateImage(textureImage, texture.imageData);
             textureImages.emplace_back(std::move(textureImage));
@@ -565,19 +556,8 @@ private:
     }
 
     void createShadowResources() {
-        auto extent = rhi.getSwapChainExtent();
-
-        vk::ImageCreateInfo imageInfo{};
-        imageInfo.imageType = vk::ImageType::e2D;
-		imageInfo.format = rhi.getDepthFormat();
-        imageInfo.extent.width = extent.width;
-        imageInfo.extent.height = extent.height;
-        imageInfo.extent.depth = 1;
-        imageInfo.mipLevels = 1;
-        imageInfo.arrayLayers = 1;
-        imageInfo.usage = vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled;
-
-        shadowImage = rhi.createImage(imageInfo);
+        shadowImage = rhi.createImage2D(rhi.getDepthFormat(),
+            vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled);
 
         vk::SamplerCreateInfo samplerInfo{};
         samplerInfo.magFilter = vk::Filter::eLinear;
@@ -588,19 +568,8 @@ private:
     }
 
     void createPostprocResources() {
-        auto extent = rhi.getSwapChainExtent();
-
-        vk::ImageCreateInfo imageInfo{};
-        imageInfo.imageType     = vk::ImageType::e2D;
-        imageInfo.format        = rhi.getSurfaceFormat();
-        imageInfo.extent.width  = extent.width;
-        imageInfo.extent.height = extent.height;
-        imageInfo.extent.depth  = 1;
-        imageInfo.mipLevels     = 1;
-        imageInfo.arrayLayers   = 1;
-        imageInfo.usage         = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled;
-
-        postprocImage = rhi.createImage(imageInfo);
+        postprocImage = rhi.createImage2D(rhi.getSurfaceFormat(), 
+            vk::ImageUsageFlagBits::eColorAttachment);
 
         vk::SamplerCreateInfo samplerInfo{};
         samplerInfo.magFilter  = vk::Filter::eLinear;
@@ -613,7 +582,7 @@ private:
     void createVertexBuffer() {
         vk::BufferCreateInfo bufferInfo{};
         bufferInfo.size = sizeof(vertices[0]) * vertices.size();
-        bufferInfo.usage = vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst;
+        bufferInfo.usage = vk::BufferUsageFlagBits::eVertexBuffer;
 
         vertexBuffer = rhi.createBuffer(bufferInfo, vertices);
 	}
@@ -621,7 +590,7 @@ private:
     void createIndexBuffer() {
         vk::BufferCreateInfo bufferInfo{};
         bufferInfo.size = sizeof(indices[0]) * indices.size();
-        bufferInfo.usage = vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst;
+        bufferInfo.usage = vk::BufferUsageFlagBits::eIndexBuffer;
 
         indexBuffer = rhi.createBuffer(bufferInfo, indices);
     }
@@ -629,7 +598,7 @@ private:
     void createIndirectBuffer() {
         vk::BufferCreateInfo bufferInfo{};
         bufferInfo.size = sizeof(drawCmds[0]) * drawCmds.size();
-        bufferInfo.usage = vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst;
+        bufferInfo.usage = vk::BufferUsageFlagBits::eIndirectBuffer;
 
         indirectBuffer = rhi.createBuffer(bufferInfo, drawCmds);
 	}
@@ -649,38 +618,20 @@ private:
     void createStorageBuffer() {
         vk::BufferCreateInfo bufferInfo{};
         bufferInfo.size = sizeof(instances[0]) * instances.size();
-        bufferInfo.usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst;
+        bufferInfo.usage = vk::BufferUsageFlagBits::eStorageBuffer;
 
         storageBuffer = rhi.createBuffer(bufferInfo, instances);
     }
 
     void createGBufferResources() {
-        auto extent = rhi.getSwapChainExtent();
-
-        vk::ImageCreateInfo albedoInfo{};
-        albedoInfo.imageType = vk::ImageType::e2D;
-        albedoInfo.format = rhi.getSurfaceFormat();
-        albedoInfo.extent.width  = extent.width;
-        albedoInfo.extent.height = extent.height;
-        albedoInfo.extent.depth  = 1;
-        albedoInfo.mipLevels = 1;
-        albedoInfo.arrayLayers = 1;
-        albedoInfo.samples = vk::SampleCountFlagBits::e1;
-        albedoInfo.usage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled;
-
-        vk::ImageCreateInfo normalInfo = albedoInfo;
-        normalInfo.format = vk::Format::eR16G16B16A16Sfloat;
-
-        vk::ImageCreateInfo positionInfo = albedoInfo;
-        positionInfo.format = vk::Format::eR32G32B32A32Sfloat;
-
-        vk::ImageCreateInfo instanceIDInfo = albedoInfo;
-        instanceIDInfo.format = vk::Format::eR32Uint;
-
-        gbufferAlbedoImage = rhi.createImage(albedoInfo);
-        gbufferNormalImage = rhi.createImage(normalInfo);
-        gbufferPositionImage = rhi.createImage(positionInfo);
-        gbufferInstanceIDImage = rhi.createImage(instanceIDInfo);
+        gbufferAlbedoImage = rhi.createImage2D(rhi.getSurfaceFormat(),
+            vk::ImageUsageFlagBits::eColorAttachment);
+        gbufferNormalImage = rhi.createImage2D(vk::Format::eR16G16B16A16Sfloat,
+            vk::ImageUsageFlagBits::eColorAttachment);
+        gbufferPositionImage = rhi.createImage2D(vk::Format::eR32G32B32A32Sfloat,
+            vk::ImageUsageFlagBits::eColorAttachment);
+        gbufferInstanceIDImage = rhi.createImage2D(vk::Format::eR32Uint,
+            vk::ImageUsageFlagBits::eColorAttachment);
 
         vk::SamplerCreateInfo samplerInfo{};
         samplerInfo.magFilter = vk::Filter::eNearest;

@@ -496,7 +496,13 @@ Gfx::Buffer RHI::createBuffer(const vk::BufferCreateInfo& bufferInfo, vk::Memory
 
 Gfx::Buffer RHI::createBuffer(const vk::BufferCreateInfo& bufferInfo, const void* contentData, size_t contentSize, vk::MemoryPropertyFlags memProperties)
 {
-    auto buffer = createBuffer(bufferInfo, memProperties);
+    auto createInfo = bufferInfo;
+    if (!(createInfo.usage & vk::BufferUsageFlagBits::eTransferDst))
+    {
+        createInfo.usage |= vk::BufferUsageFlagBits::eTransferDst;
+    }
+
+    auto buffer = createBuffer(createInfo, memProperties);
     updateBuffer(buffer, contentData, contentSize);
     return buffer;
 }
@@ -541,8 +547,11 @@ void RHI::updateBuffer(const Buffer& buffer, const void* contentData, size_t con
 
 Gfx::Image RHI::createImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryPropertyFlags memProperties)
 {
+    auto createInfo = imageInfo;
+    createInfo.usage |= vk::ImageUsageFlagBits::eSampled;
+
     auto bufferedCount =
-        imageInfo.usage & (
+        createInfo.usage & (
             vk::ImageUsageFlagBits::eColorAttachment | 
             vk::ImageUsageFlagBits::eDepthStencilAttachment) ?
         m_maxFramesInFlight :
@@ -558,7 +567,7 @@ Gfx::Image RHI::createImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryProp
 
     for (size_t i = 0; i < bufferedCount; i++)
     {
-        vk::raii::Image image(m_device, imageInfo);
+        vk::raii::Image image(m_device, createInfo);
 
         auto memRequirements = image.getMemoryRequirements();
 
@@ -573,9 +582,9 @@ Gfx::Image RHI::createImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryProp
         vk::ImageViewCreateInfo viewInfo{};
         viewInfo.image = image;
         viewInfo.viewType = vk::ImageViewType::e2D;
-        viewInfo.format = imageInfo.format;
+        viewInfo.format = createInfo.format;
         viewInfo.subresourceRange.aspectMask =
-            (imageInfo.usage & vk::ImageUsageFlagBits::eDepthStencilAttachment) ? 
+            (createInfo.usage & vk::ImageUsageFlagBits::eDepthStencilAttachment) ?
             vk::ImageAspectFlagBits::eDepth: 
             vk::ImageAspectFlagBits::eColor;
         viewInfo.subresourceRange.levelCount = 1;
@@ -588,7 +597,7 @@ Gfx::Image RHI::createImage(const vk::ImageCreateInfo& imageInfo, vk::MemoryProp
         imageViews.emplace_back(std::move(imageView));
     }
 
-    return Gfx::Image(imageInfo, std::move(images), std::move(imageMemories), std::move(imageViews));
+    return Gfx::Image(createInfo, std::move(images), std::move(imageMemories), std::move(imageViews));
 }
 
 Gfx::Sampler RHI::createSampler(const vk::SamplerCreateInfo& samplerInfo)
@@ -865,8 +874,7 @@ std::vector<Gfx::DescriptorSet> RHI::createDescriptorSets(const vk::DescriptorSe
                     std::get<std::vector<vk::DescriptorBufferInfo>>(binding.data);
                 if (bufInfos.empty()) continue;
                 // Use per-frame entry if available, otherwise fall back to index 0.
-                const vk::DescriptorBufferInfo& bufInfo =
-                    (i < bufInfos.size()) ? bufInfos[i] : bufInfos[0];
+                const auto& bufInfo = (i < bufInfos.size()) ? bufInfos[i] : bufInfos[0];
 
                 write.descriptorCount = 1;
                 write.pBufferInfo = &bufInfo;
@@ -875,7 +883,7 @@ std::vector<Gfx::DescriptorSet> RHI::createDescriptorSets(const vk::DescriptorSe
             {
                 const auto& perFrameImages =
                     std::get<std::vector<std::vector<vk::DescriptorImageInfo>>>(binding.data);
-                if (perFrameImages.empty()) continue;
+                if (perFrameImages.empty()) { continue; }
                 // Use per-frame entry if available, otherwise fall back to index 0.
                 const std::vector<vk::DescriptorImageInfo>& imgInfos =
                     (i < perFrameImages.size()) ? perFrameImages[i] : perFrameImages[0];

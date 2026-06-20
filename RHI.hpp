@@ -82,6 +82,24 @@ namespace Gfx
 		    return createBuffer(bufferInfo, data.data(), data.size() * sizeof(T), memProperties);
 		}
 
+		Image createImage2D(vk::Format format, vk::Extent2D extent, vk::ImageUsageFlags usageFlags)
+		{
+			vk::ImageCreateInfo imageInfo{};
+			imageInfo.imageType = vk::ImageType::e2D;
+			imageInfo.format = format;
+			imageInfo.extent = vk::Extent3D{ extent, 1 };
+			imageInfo.mipLevels = 1;
+			imageInfo.arrayLayers = 1;
+			imageInfo.samples = vk::SampleCountFlagBits::e1;
+			imageInfo.usage = usageFlags;
+			return createImage(imageInfo);
+		}
+
+		Image createImage2D(vk::Format format, vk::ImageUsageFlags usageFlags)
+		{
+			return createImage2D(format, m_swapChainExtent, usageFlags);
+		}
+
 		template<typename T>
 		void updateBuffer(const Buffer& buffer, const T& data) {
 			updateBuffer(buffer, &data, sizeof(T));
