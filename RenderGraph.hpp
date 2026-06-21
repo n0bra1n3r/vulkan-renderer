@@ -212,24 +212,6 @@ namespace Gfx
             return std::get<GraphicsPipelineBuilder>(m_pipelineBuilders.back());
         }
 
-        void build(Pipeline& pipeline, std::vector<DescriptorSet>& descriptorSets)
-        {
-            const auto& builder = m_pipelineBuilders.back();
-            m_pipelineBuilders.pop_back();
-            if (std::holds_alternative<ComputePipelineBuilder>(builder))
-            {
-                const auto& computeBuilder = std::get<ComputePipelineBuilder>(builder);
-                pipeline = m_rhi.createPipeline(computeBuilder.m_pipelineCreateInfo);
-                descriptorSets = m_rhi.createDescriptorSets(pipeline.getDescriptorSetLayout(), computeBuilder.m_descriptorBindings);
-            }
-            else
-            {
-                const auto& computeBuilder = std::get<ComputePipelineBuilder>(builder);
-                pipeline = m_rhi.createPipeline(computeBuilder.m_pipelineCreateInfo);
-                descriptorSets = m_rhi.createDescriptorSets(pipeline.getDescriptorSetLayout(), computeBuilder.m_descriptorBindings);
-            }
-        }
-
         // Initialize per-frame resources (command buffers, semaphores, fences).
         // Must be called after creating swapchain and image views.
         void init();
