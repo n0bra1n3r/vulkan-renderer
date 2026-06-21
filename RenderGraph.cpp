@@ -3,8 +3,180 @@
 #include <unordered_map>
 #include <unordered_set>
 
-using Gfx::RenderGraph;
+using Gfx::ComputePipelineBuilder;
 using Gfx::GraphicsPipelineBuilder;
+using Gfx::RenderGraph;
+
+ComputePipelineBuilder& ComputePipelineBuilder::shaderBinding(const Gfx::Buffer& buffer)
+{
+    auto index = static_cast<uint32_t>(m_pipelineCreateInfo.descriptorSetLayoutBindings.size());
+    const auto& createInfo = buffer.getCreateInfo();
+
+    auto descriptorType =
+        (createInfo.usage & vk::BufferUsageFlagBits::eStorageBuffer) ?
+        vk::DescriptorType::eStorageBuffer :
+        vk::DescriptorType::eUniformBuffer;
+
+    m_pipelineCreateInfo.descriptorSetLayoutBindings.emplace_back(
+        index,
+        descriptorType,
+        1,
+        vk::ShaderStageFlagBits::eCompute,
+        nullptr);
+
+    DescriptorBinding descriptorBinding{};
+
+    std::vector<vk::DescriptorBufferInfo> resourceInfos{};
+
+    if (descriptorType == vk::DescriptorType::eUniformBuffer)
+    {
+        for (int i = 0; i < buffer.getBufferCount(); i++)
+        {
+            vk::DescriptorBufferInfo resourceInfo = {
+                buffer.getBuffer(i),
+                0,
+                createInfo.size,
+            };
+            resourceInfos.emplace_back(std::move(resourceInfo));
+        }
+    }
+    else
+    {
+        resourceInfos = { {
+            buffer.getBuffer(0),
+            0,
+            createInfo.size,
+        } };
+    }
+
+    descriptorBinding.type = descriptorType;
+    descriptorBinding.data = resourceInfos;
+
+    m_descriptorBindings.emplace_back(std::move(descriptorBinding));
+
+    return *this;
+}
+
+GraphicsPipelineBuilder& GraphicsPipelineBuilder::shaderBinding(
+    std::variant<const std::vector<Gfx::Image>*, const Gfx::Image*> images, 
+    vk::ShaderStageFlagBits stage, 
+    const Gfx::Sampler& sampler)
+{
+    auto index = static_cast<uint32_t>(m_pipelineCreateInfo.descriptorSetLayoutBindings.size());
+
+    auto descriptorType =
+        sampler.getSampler() != nullptr ?
+        vk::DescriptorType::eCombinedImageSampler :
+        vk::DescriptorType::eSampledImage;
+    auto descriptorCount =
+        std::holds_alternative<const std::vector<Image>*>(images) ?
+        std::get<const std::vector<Image>*>(images)->size() :
+        1;
+
+    m_pipelineCreateInfo.descriptorSetLayoutBindings.emplace_back(
+        index,
+        descriptorType,
+        static_cast<uint32_t>(descriptorCount),
+        stage,
+        nullptr);
+
+    DescriptorBinding descriptorBinding{};
+
+    std::vector<std::vector<vk::DescriptorImageInfo>> resourceInfos{};
+
+    if (descriptorCount == 1)
+    {
+        const auto& image = *std::get<const Image*>(images);
+
+        m_shaderReadImages.emplace_back(std::move(image.getInfo()));
+
+        for (int i = 0; i < image.getImageCount(); i++)
+        {
+            vk::DescriptorImageInfo resourceInfo = {
+                sampler.getSampler(),
+                image.getImageView(i),
+                vk::ImageLayout::eShaderReadOnlyOptimal,
+            };
+            resourceInfos.emplace_back(std::vector<vk::DescriptorImageInfo>{ std::move(resourceInfo) });
+        }
+    }
+    else
+    {
+        resourceInfos.resize(1);
+
+        const auto& imageArray = *std::get<const std::vector<Image>*>(images);
+
+        for (const auto& image : imageArray)
+        {
+            m_shaderReadImages.emplace_back(std::move(image.getInfo()));
+
+            vk::DescriptorImageInfo resourceInfo = {
+                sampler.getSampler(),
+                image.getImageView(0),
+                vk::ImageLayout::eShaderReadOnlyOptimal,
+            };
+
+            resourceInfos[0].emplace_back(std::move(resourceInfo));
+        }
+    }
+
+    descriptorBinding.type = descriptorType;
+    descriptorBinding.data = resourceInfos;
+
+    m_descriptorBindings.emplace_back(std::move(descriptorBinding));
+
+    return *this;
+}
+
+GraphicsPipelineBuilder& GraphicsPipelineBuilder::shaderBinding(const Gfx::Buffer* buffer, vk::ShaderStageFlagBits stage)
+{
+    auto index = static_cast<uint32_t>(m_pipelineCreateInfo.descriptorSetLayoutBindings.size());
+    const auto& createInfo = buffer->getCreateInfo();
+
+    auto descriptorType =
+        (createInfo.usage & vk::BufferUsageFlagBits::eStorageBuffer) ?
+        vk::DescriptorType::eStorageBuffer :
+        vk::DescriptorType::eUniformBuffer;
+
+    m_pipelineCreateInfo.descriptorSetLayoutBindings.emplace_back(
+        index,
+        descriptorType,
+        1,
+        stage,
+        nullptr);
+
+    DescriptorBinding descriptorBinding{};
+
+    std::vector<vk::DescriptorBufferInfo> resourceInfos{};
+
+    if (descriptorType == vk::DescriptorType::eUniformBuffer)
+    {
+        for (int i = 0; i < buffer->getBufferCount(); i++)
+        {
+            vk::DescriptorBufferInfo resourceInfo = {
+                buffer->getBuffer(i),
+                0,
+                createInfo.size,
+            };
+            resourceInfos.emplace_back(std::move(resourceInfo));
+        }
+    }
+    else
+    {
+        resourceInfos = { {
+            buffer->getBuffer(0),
+            0,
+            createInfo.size,
+        } };
+    }
+
+    descriptorBinding.type = descriptorType;
+    descriptorBinding.data = resourceInfos;
+
+    m_descriptorBindings.emplace_back(std::move(descriptorBinding));
+
+    return *this;
+}
 
 void RenderGraph::init()
 {
